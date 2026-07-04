@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 # ---------------------------------------------------------------------------
 # MQTT listener configuration
@@ -13,6 +14,7 @@ BROKER_HOST = "localhost"
 BROKER_PORT = 1883
 TOPIC_FILTER = "home/#"
 LOG_PATH = Path("logs/mqtt_messages.log")
+JSONL_PATH = Path("logs/mqtt_messages.jsonl")
 
 
 def current_timestamp() -> datetime:
@@ -27,11 +29,45 @@ def decode_payload(payload: bytes | str) -> str:
     return str(payload)
 
 
+def parse_json_payload(payload_text: str) -> Any | None:
+    """Return parsed JSON when payload_text is valid JSON, otherwise None."""
+    try:
+        return json.loads(payload_text)
+    except json.JSONDecodeError:
+        return None
+
+
+def compact_json(value: Any) -> str:
+    """Render JSON without extra whitespace for logs and terminal output."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def format_log_line(timestamp: datetime, topic: str, payload: bytes | str) -> str:
     """Build the single line printed to stdout and appended to the log file."""
+    payload_text = decode_payload(payload)
+    parsed_payload = parse_json_payload(payload_text)
+    prefix = f"{timestamp.isoformat(timespec='seconds')} | topic={topic}"
+
+    if parsed_payload is None:
+        return f"{prefix} | payload={payload_text}"
+
+    device = parsed_payload.get("device", "") if isinstance(parsed_payload, dict) else ""
+    message_type = parsed_payload.get("type", "") if isinstance(parsed_payload, dict) else ""
+
     return (
-        f"{timestamp.isoformat(timespec='seconds')} | "
-        f"topic={topic} | payload={decode_payload(payload)}"
+        f"{prefix} | device={device} | type={message_type} | "
+        f"payload={compact_json(parsed_payload)}"
+    )
+
+
+def format_jsonl_record(timestamp: datetime, topic: str, payload_object: Any) -> str:
+    """Build one JSON Lines record for a valid JSON MQTT payload."""
+    return compact_json(
+        {
+            "received_at": timestamp.isoformat(timespec="seconds"),
+            "topic": topic,
+            "payload": payload_object,
+        }
     )
 
 
@@ -44,15 +80,31 @@ def append_log_line(log_path: Path, line: str) -> None:
         log_file.write(f"{line}\n")
 
 
+def append_jsonl_record(jsonl_path: Path, line: str) -> None:
+    """Create the JSONL folder if needed, then append one JSON record."""
+    append_log_line(jsonl_path, line)
+
+
 def handle_message(
     message,
     log_path: Path = LOG_PATH,
     clock: Callable[[], datetime] = current_timestamp,
+    jsonl_path: Path = JSONL_PATH,
 ) -> None:
     """Print and persist one MQTT message received by paho-mqtt."""
-    line = format_log_line(clock(), message.topic, message.payload)
+    received_at = clock()
+    payload_text = decode_payload(message.payload)
+    parsed_payload = parse_json_payload(payload_text)
+    line = format_log_line(received_at, message.topic, payload_text)
+
     print(line, flush=True)
     append_log_line(log_path, line)
+
+    if parsed_payload is not None:
+        append_jsonl_record(
+            jsonl_path,
+            format_jsonl_record(received_at, message.topic, parsed_payload),
+        )
 
 
 def create_mqtt_client(
@@ -60,6 +112,7 @@ def create_mqtt_client(
     broker_port: int = BROKER_PORT,
     topic_filter: str = TOPIC_FILTER,
     log_path: Path = LOG_PATH,
+    jsonl_path: Path = JSONL_PATH,
 ):
     """Create and configure a paho-mqtt client for this listener.
 
@@ -93,7 +146,7 @@ def create_mqtt_client(
         print(f"[MQTT] Subscription confirmed for {topic_filter}", flush=True)
 
     def on_message(client, userdata, message):
-        handle_message(message, log_path)
+        handle_message(message, log_path, jsonl_path=jsonl_path)
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
@@ -106,6 +159,7 @@ def create_mqtt_client(
 def run_listener() -> None:
     """Connect to the local broker and process messages until interrupted."""
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
     client = create_mqtt_client()
 
     print(
@@ -114,6 +168,7 @@ def run_listener() -> None:
         flush=True,
     )
     print(f"[MQTT] Appending messages to {LOG_PATH}", flush=True)
+    print(f"[MQTT] Appending valid JSON messages to {JSONL_PATH}", flush=True)
 
     client.connect_async(BROKER_HOST, BROKER_PORT, keepalive=60)
     client.loop_forever(retry_first_connection=True)

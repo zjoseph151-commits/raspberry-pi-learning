@@ -4,3 +4,4 @@ __pycache__/
 *.py[cod]
 .venv/
 logs/*.log
+logs/*.jsonl

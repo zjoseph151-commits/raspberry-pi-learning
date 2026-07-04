@@ -11,12 +11,13 @@ const char *WIFI_PASSWORD = "MoutainMan69!";
 
 const char *MQTT_BROKER_IP = "10.0.0.179";
 const uint16_t MQTT_PORT = 1883;
-const char *MQTT_TOPIC = "home/esp32/status";
+const char *MQTT_TOPIC = "home/esp32-s3/status";
 const char *MQTT_CLIENT_ID = "esp32-s3-heartbeat-client";
 
 const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_DELAY_MS = 500;
 const unsigned long MQTT_RETRY_DELAY_MS = 5000;
+const char *HEARTBEAT_JSON_FORMAT = "{\"device\":\"esp32-s3-test\",\"type\":\"heartbeat\",\"count\":%lu,\"uptime_ms\":%lu,\"wifi_rssi\":%ld}";
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -133,6 +134,19 @@ void ensureMQTTConnected()
     connectToMQTT();
 }
 
+bool buildHeartbeatPayload(char *payload, size_t payloadSize, unsigned long count, unsigned long uptimeMs, long wifiRssi)
+{
+    const int written = snprintf(
+        payload,
+        payloadSize,
+        HEARTBEAT_JSON_FORMAT,
+        count,
+        uptimeMs,
+        wifiRssi);
+
+    return written > 0 && static_cast<size_t>(written) < payloadSize;
+}
+
 void publishHeartbeat()
 {
     if (!mqttClient.connected())
@@ -150,14 +164,13 @@ void publishHeartbeat()
     lastHeartbeatAt = now;
     heartbeatCount++;
 
-    char payload[160];
-    snprintf(
-        payload,
-        sizeof(payload),
-        "{\"status\":\"online\",\"count\":%lu,\"uptime_ms\":%lu,\"ip\":\"%s\"}",
-        heartbeatCount,
-        now,
-        WiFi.localIP().toString().c_str());
+    const long wifiRssi = static_cast<long>(WiFi.RSSI());
+    char payload[192];
+    if (!buildHeartbeatPayload(payload, sizeof(payload), heartbeatCount, now, wifiRssi))
+    {
+        Serial.println("[MQTT] Heartbeat payload was too large; publish skipped.");
+        return;
+    }
 
     const bool published = mqttClient.publish(MQTT_TOPIC, payload);
 
@@ -165,6 +178,13 @@ void publishHeartbeat()
     Serial.print(MQTT_TOPIC);
     Serial.print(": ");
     Serial.println(payload);
+    Serial.print("[MQTT] Heartbeat count=");
+    Serial.print(heartbeatCount);
+    Serial.print(", uptime_ms=");
+    Serial.print(now);
+    Serial.print(", wifi_rssi=");
+    Serial.print(wifiRssi);
+    Serial.println(" dBm");
 
     if (published)
     {

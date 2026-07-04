@@ -11,7 +11,7 @@ Goals:
 
 ## ESP32-S3 MQTT Heartbeat
 
-This repository includes a PlatformIO project for an ESP32-S3 that connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, and publishes a heartbeat every 5 seconds.
+This repository includes a PlatformIO project for an ESP32-S3 that connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, and publishes a compact JSON heartbeat every 5 seconds to `home/esp32-s3/status`.
 
 The default PlatformIO target is `esp32-s3-devkitc-1`. If your ESP32-S3 board is a different model, update the `board` value in `platformio.ini`.
 
@@ -22,6 +22,12 @@ Configure these values at the top of `src/main.cpp` before uploading:
 - `MQTT_BROKER_IP`
 - `MQTT_PORT`
 - `MQTT_TOPIC`
+
+Heartbeat payloads use this compact JSON shape:
+
+```json
+{"device":"esp32-s3-test","type":"heartbeat","count":1,"uptime_ms":5000,"wifi_rssi":-57}
+```
 
 Useful PlatformIO commands:
 
@@ -35,7 +41,7 @@ python -m platformio device monitor
 
 The Python listener connects to the MQTT broker running on the Raspberry Pi at `localhost:1883`, subscribes to `home/#`, prints every received message, and appends the same line to `logs/mqtt_messages.log`.
 
-The listener intentionally only logs messages to a text file for now. Database support is not included yet.
+When a payload is valid JSON, the listener also appends a structured JSON Lines record to `logs/mqtt_messages.jsonl`. Database support is not included yet.
 
 ### Setup
 
@@ -62,10 +68,16 @@ Start the listener from the repository root:
 python -m mqtt_listener.listener
 ```
 
-Each received message is printed like this:
+Valid JSON messages are printed with structured fields:
 
 ```text
-2026-07-03T12:34:56-06:00 | topic=home/esp32/status | payload={"status":"online"}
+2026-07-03T12:34:56-06:00 | topic=home/esp32-s3/status | device=esp32-s3-test | type=heartbeat | payload={"device":"esp32-s3-test","type":"heartbeat","count":1,"uptime_ms":5000,"wifi_rssi":-57}
 ```
 
-The listener creates the `logs/` folder if needed and appends messages to `logs/mqtt_messages.log`.
+Raw non-JSON messages are still printed and logged:
+
+```text
+2026-07-03T12:35:01-06:00 | topic=home/sensor/raw | payload=not json
+```
+
+The listener creates the `logs/` folder if needed, appends all messages to `logs/mqtt_messages.log`, and appends valid JSON messages to `logs/mqtt_messages.jsonl` as records with `received_at`, `topic`, and `payload`.

@@ -41,7 +41,7 @@ python -m platformio device monitor
 
 The Python listener connects to the MQTT broker running on the Raspberry Pi at `localhost:1883`, subscribes to `home/#`, prints every received message, and appends the same line to `logs/mqtt_messages.log`.
 
-When a payload is valid JSON, the listener also appends a structured JSON Lines record to `logs/mqtt_messages.jsonl`. Database support is not included yet.
+When a payload is valid JSON, the listener also appends a structured JSON Lines record to `logs/mqtt_messages.jsonl` and a CSV row to `logs/mqtt_messages.csv`. Database support is not included yet.
 
 ### Setup
 
@@ -81,3 +81,11 @@ Raw non-JSON messages are still printed and logged:
 ```
 
 The listener creates the `logs/` folder if needed, appends all messages to `logs/mqtt_messages.log`, and appends valid JSON messages to `logs/mqtt_messages.jsonl` as records with `received_at`, `topic`, and `payload`.
+
+Valid JSON messages are also appended to `logs/mqtt_messages.csv`. The CSV header is created automatically when the file does not exist:
+
+```csv
+received_at,topic,device,type,count,uptime_ms,wifi_rssi
+```
+
+Missing JSON fields are written as blank CSV values.

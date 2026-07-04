@@ -1,3 +1,4 @@
+import csv
 import json
 import io
 import tempfile
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from mqtt_listener.listener import (
+    CSV_PATH,
     JSONL_PATH,
     append_log_line,
     decode_payload,
@@ -79,10 +81,11 @@ class MqttListenerTests(unittest.TestCase):
 
             self.assertEqual(log_path.read_text(encoding="utf-8"), "first\nsecond\n")
 
-    def test_handle_message_prints_and_logs_json_message_to_both_files(self):
+    def test_handle_message_prints_and_logs_json_message_to_all_structured_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
             jsonl_path = Path(temp_dir) / JSONL_PATH
+            csv_path = Path(temp_dir) / CSV_PATH
             timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
             payload = (
                 b'{"device":"esp32-s3-test","type":"heartbeat","count":7,'
@@ -92,7 +95,13 @@ class MqttListenerTests(unittest.TestCase):
             output = io.StringIO()
 
             with redirect_stdout(output):
-                handle_message(message, log_path, lambda: timestamp, jsonl_path=jsonl_path)
+                handle_message(
+                    message,
+                    log_path,
+                    lambda: timestamp,
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
 
             expected = (
                 "2026-07-03T12:34:56+00:00 | "
@@ -120,16 +129,90 @@ class MqttListenerTests(unittest.TestCase):
                 },
             )
 
-    def test_handle_message_does_not_write_invalid_json_to_jsonl(self):
+            with csv_path.open("r", newline="", encoding="utf-8") as csv_file:
+                reader = csv.DictReader(csv_file)
+                rows = list(reader)
+                fieldnames = reader.fieldnames
+
+            self.assertEqual(
+                fieldnames,
+                [
+                    "received_at",
+                    "topic",
+                    "device",
+                    "type",
+                    "count",
+                    "uptime_ms",
+                    "wifi_rssi",
+                ],
+            )
+            self.assertEqual(
+                rows,
+                [
+                    {
+                        "received_at": "2026-07-03T12:34:56+00:00",
+                        "topic": "home/esp32-s3/status",
+                        "device": "esp32-s3-test",
+                        "type": "heartbeat",
+                        "count": "7",
+                        "uptime_ms": "12345",
+                        "wifi_rssi": "-57",
+                    }
+                ],
+            )
+
+    def test_handle_message_writes_blank_csv_values_for_missing_json_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
             jsonl_path = Path(temp_dir) / JSONL_PATH
+            csv_path = Path(temp_dir) / CSV_PATH
+            timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
+            message = FakeMessage("home/esp32-s3/status", b'{"device":"esp32-s3-test"}')
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    message,
+                    log_path,
+                    lambda: timestamp,
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            with csv_path.open("r", newline="", encoding="utf-8") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+
+            self.assertEqual(
+                rows,
+                [
+                    {
+                        "received_at": "2026-07-03T12:34:56+00:00",
+                        "topic": "home/esp32-s3/status",
+                        "device": "esp32-s3-test",
+                        "type": "",
+                        "count": "",
+                        "uptime_ms": "",
+                        "wifi_rssi": "",
+                    }
+                ],
+            )
+
+    def test_handle_message_does_not_write_invalid_json_to_jsonl_or_csv(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
+            jsonl_path = Path(temp_dir) / JSONL_PATH
+            csv_path = Path(temp_dir) / CSV_PATH
             timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
             message = FakeMessage("home/sensor/raw", b"not json")
             output = io.StringIO()
 
             with redirect_stdout(output):
-                handle_message(message, log_path, lambda: timestamp, jsonl_path=jsonl_path)
+                handle_message(
+                    message,
+                    log_path,
+                    lambda: timestamp,
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
 
             expected = (
                 "2026-07-03T12:34:56+00:00 | "
@@ -138,6 +221,7 @@ class MqttListenerTests(unittest.TestCase):
             self.assertEqual(output.getvalue(), expected)
             self.assertEqual(log_path.read_text(encoding="utf-8"), expected)
             self.assertFalse(jsonl_path.exists())
+            self.assertFalse(csv_path.exists())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,16 @@ BROKER_PORT = 1883
 TOPIC_FILTER = "home/#"
 LOG_PATH = Path("logs/mqtt_messages.log")
 JSONL_PATH = Path("logs/mqtt_messages.jsonl")
+CSV_PATH = Path("logs/mqtt_messages.csv")
+CSV_COLUMNS = [
+    "received_at",
+    "topic",
+    "device",
+    "type",
+    "count",
+    "uptime_ms",
+    "wifi_rssi",
+]
 
 
 def current_timestamp() -> datetime:
@@ -71,6 +82,21 @@ def format_jsonl_record(timestamp: datetime, topic: str, payload_object: Any) ->
     )
 
 
+def format_csv_row(timestamp: datetime, topic: str, payload_object: Any) -> dict[str, Any]:
+    """Build one CSV row, leaving blanks when expected JSON fields are absent."""
+    payload = payload_object if isinstance(payload_object, dict) else {}
+
+    return {
+        "received_at": timestamp.isoformat(timespec="seconds"),
+        "topic": topic,
+        "device": payload.get("device", ""),
+        "type": payload.get("type", ""),
+        "count": payload.get("count", ""),
+        "uptime_ms": payload.get("uptime_ms", ""),
+        "wifi_rssi": payload.get("wifi_rssi", ""),
+    }
+
+
 def append_log_line(log_path: Path, line: str) -> None:
     """Create the log folder if needed, then append one message line."""
     log_path = Path(log_path)
@@ -85,11 +111,25 @@ def append_jsonl_record(jsonl_path: Path, line: str) -> None:
     append_log_line(jsonl_path, line)
 
 
+def append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
+    """Create the CSV log if needed, write a header once, then append row."""
+    csv_path = Path(csv_path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    should_write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+
+    with csv_path.open("a", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=CSV_COLUMNS)
+        if should_write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def handle_message(
     message,
     log_path: Path = LOG_PATH,
     clock: Callable[[], datetime] = current_timestamp,
     jsonl_path: Path = JSONL_PATH,
+    csv_path: Path = CSV_PATH,
 ) -> None:
     """Print and persist one MQTT message received by paho-mqtt."""
     received_at = clock()
@@ -105,6 +145,10 @@ def handle_message(
             jsonl_path,
             format_jsonl_record(received_at, message.topic, parsed_payload),
         )
+        append_csv_row(
+            csv_path,
+            format_csv_row(received_at, message.topic, parsed_payload),
+        )
 
 
 def create_mqtt_client(
@@ -113,6 +157,7 @@ def create_mqtt_client(
     topic_filter: str = TOPIC_FILTER,
     log_path: Path = LOG_PATH,
     jsonl_path: Path = JSONL_PATH,
+    csv_path: Path = CSV_PATH,
 ):
     """Create and configure a paho-mqtt client for this listener.
 
@@ -146,7 +191,7 @@ def create_mqtt_client(
         print(f"[MQTT] Subscription confirmed for {topic_filter}", flush=True)
 
     def on_message(client, userdata, message):
-        handle_message(message, log_path, jsonl_path=jsonl_path)
+        handle_message(message, log_path, jsonl_path=jsonl_path, csv_path=csv_path)
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
@@ -160,6 +205,7 @@ def run_listener() -> None:
     """Connect to the local broker and process messages until interrupted."""
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
     client = create_mqtt_client()
 
     print(
@@ -169,6 +215,7 @@ def run_listener() -> None:
     )
     print(f"[MQTT] Appending messages to {LOG_PATH}", flush=True)
     print(f"[MQTT] Appending valid JSON messages to {JSONL_PATH}", flush=True)
+    print(f"[MQTT] Appending valid JSON CSV rows to {CSV_PATH}", flush=True)
 
     client.connect_async(BROKER_HOST, BROKER_PORT, keepalive=60)
     client.loop_forever(retry_first_connection=True)

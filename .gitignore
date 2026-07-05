@@ -6,3 +6,4 @@ __pycache__/
 logs/*.log
 logs/*.jsonl
 logs/*.csv
+logs/device_status.json

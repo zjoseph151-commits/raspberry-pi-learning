@@ -101,3 +101,13 @@ python device_status.py
 The report groups messages by `device` and shows the latest `received_at`, `topic`, `type`, `count`, `uptime_ms`, and `wifi_rssi` for each device. A device is shown as `ONLINE` when its latest message was received within the last 30 seconds; otherwise it is shown as `OFFLINE`.
 
 If `logs/mqtt_messages.csv` is missing or empty, the script prints a friendly message and exits without an error.
+
+### Automated Health Monitor
+
+Run the health monitor to write the latest device status snapshot to `logs/device_status.json` and print the same JSON report to the terminal:
+
+```bash
+python health_monitor.py
+```
+
+The monitor reads `logs/mqtt_messages.csv`, keeps the latest message per `device`, and marks devices `ONLINE` when the latest message is within 30 seconds. Missing or empty CSV input produces an empty `devices` list with a friendly `message` field.

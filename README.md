@@ -89,3 +89,15 @@ received_at,topic,device,type,count,uptime_ms,wifi_rssi
 ```
 
 Missing JSON fields are written as blank CSV values.
+
+### Device Health Report
+
+After the listener has written `logs/mqtt_messages.csv`, run the device status utility from the repository root:
+
+```bash
+python device_status.py
+```
+
+The report groups messages by `device` and shows the latest `received_at`, `topic`, `type`, `count`, `uptime_ms`, and `wifi_rssi` for each device. A device is shown as `ONLINE` when its latest message was received within the last 30 seconds; otherwise it is shown as `OFFLINE`.
+
+If `logs/mqtt_messages.csv` is missing or empty, the script prints a friendly message and exits without an error.

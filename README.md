@@ -111,3 +111,22 @@ python health_monitor.py
 ```
 
 The monitor reads `logs/mqtt_messages.csv`, keeps the latest message per `device`, and marks devices `ONLINE` when the latest message is within 30 seconds. Missing or empty CSV input produces an empty `devices` list with a friendly `message` field.
+
+### Web Dashboard
+
+The dashboard serves a simple local webpage on port `8080` using only the Python standard library. It reads `logs/device_status.json`, so run the health monitor first whenever you want to refresh the status snapshot:
+
+```bash
+python health_monitor.py
+python dashboard_server.py
+```
+
+Open the dashboard on the Raspberry Pi at:
+
+```text
+http://localhost:8080
+```
+
+From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows `ONLINE` and `OFFLINE` labels for each device.
+
+If `logs/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.

@@ -6,11 +6,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN_CPP = PROJECT_ROOT / "src" / "main.cpp"
+PLATFORMIO_INI = PROJECT_ROOT / "platformio.ini"
 
 
 class Esp32SensorNodeFoundationTests(unittest.TestCase):
     def setUp(self):
         self.source = MAIN_CPP.read_text(encoding="utf-8")
+        self.platformio = PLATFORMIO_INI.read_text(encoding="utf-8")
 
     def test_device_identity_and_topics_target_esp32_c3_foundation(self):
         self.assertIn('const char *DEVICE_ID = "esp32-c3-test";', self.source)
@@ -29,6 +31,10 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         )
         self.assertIn(
             'const char *COMMANDS_TOPIC = "home/devices/esp32-c3-test/commands";',
+            self.source,
+        )
+        self.assertIn(
+            'const char *RESPONSES_TOPIC = "home/devices/esp32-c3-test/responses";',
             self.source,
         )
         self.assertIn("String buildMqttClientId()", self.source)
@@ -58,37 +64,42 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertNotIn(" ", sample_payload)
         self.assertNotIn("\n", sample_payload)
 
-    def test_water_sensor_configuration_and_telemetry_topics_are_present(self):
-        self.assertIn("const uint8_t WTR_PIN =", self.source)
-        self.assertIn("pinMode(WTR_PIN, INPUT);", self.source)
+    def test_dht11_sensor_configuration_and_telemetry_topics_are_present(self):
+        self.assertIn("#include <DHT.h>", self.source)
+        self.assertIn("const uint8_t DHT_PIN = 3;", self.source)
+        self.assertIn("const uint8_t DHT_TYPE = DHT11;", self.source)
+        self.assertIn("DHT dht(DHT_PIN, DHT_TYPE);", self.source)
+        self.assertIn("dht.begin();", self.source)
+        self.assertIn("adafruit/DHT sensor library", self.platformio)
         self.assertIn(
             'const char *TELEMETRY_TOPIC = "home/devices/esp32-c3-test/telemetry";',
             self.source,
         )
         self.assertIn("const unsigned long TELEMETRY_INTERVAL_MS = 15000;", self.source)
 
-    def test_water_telemetry_payload_formats_are_compact_valid_json(self):
+    def test_dht11_telemetry_payload_formats_are_compact_valid_json(self):
         success_match = re.search(
-            r'const char \*WATER_TELEMETRY_JSON_FORMAT =\s*"((?:\\.|[^"])*)";',
+            r'const char \*DHT_TELEMETRY_JSON_FORMAT =\s*"((?:\\.|[^"])*)";',
             self.source,
         )
         failure_match = re.search(
-            r'const char \*WATER_TELEMETRY_ERROR_JSON_FORMAT =\s*"((?:\\.|[^"])*)";',
+            r'const char \*DHT_TELEMETRY_ERROR_JSON_FORMAT =\s*"((?:\\.|[^"])*)";',
             self.source,
         )
-        self.assertIsNotNone(success_match, "WATER_TELEMETRY_JSON_FORMAT is missing")
-        self.assertIsNotNone(failure_match, "WATER_TELEMETRY_ERROR_JSON_FORMAT is missing")
+        self.assertIsNotNone(success_match, "DHT_TELEMETRY_JSON_FORMAT is missing")
+        self.assertIsNotNone(failure_match, "DHT_TELEMETRY_ERROR_JSON_FORMAT is missing")
 
         success_format = bytes(success_match.group(1), "utf-8").decode("unicode_escape")
         failure_format = bytes(failure_match.group(1), "utf-8").decode("unicode_escape")
-        success_payload = success_format % (72, 123456)
+        success_payload = success_format % (23.4, 56.7, 123456)
         failure_payload = failure_format % 123456
 
         self.assertEqual(
             json.loads(success_payload),
             {
                 "device": "esp32-c3-test",
-                "water_level_percent": 72,
+                "temperature_c": 23.4,
+                "humidity_percent": 56.7,
                 "sensor_ok": True,
                 "uptime_ms": 123456,
             },
@@ -97,7 +108,8 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
             json.loads(failure_payload),
             {
                 "device": "esp32-c3-test",
-                "water_level_percent": None,
+                "temperature_c": None,
+                "humidity_percent": None,
                 "sensor_ok": False,
                 "uptime_ms": 123456,
             },
@@ -106,11 +118,11 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertNotIn("\n", success_payload)
         self.assertNotIn("NaN", failure_payload)
 
-    def test_water_sensor_reading_and_telemetry_publishing_are_separate_functions(self):
-        self.assertIn("WaterLevelReading readWaterLevelSensor()", self.source)
-        self.assertIn("bool buildWaterTelemetryPayload(", self.source)
-        self.assertIn("void publishWaterTelemetry()", self.source)
-        self.assertIn("void publishWaterTelemetryIfDue()", self.source)
+    def test_dht11_sensor_reading_and_telemetry_publishing_are_separate_functions(self):
+        self.assertIn("DhtReading readDhtSensor()", self.source)
+        self.assertIn("bool buildDhtTelemetryPayload(", self.source)
+        self.assertIn("void publishDhtTelemetry()", self.source)
+        self.assertIn("void publishDhtTelemetryIfDue()", self.source)
         self.assertIn("mqttClient.publish(TELEMETRY_TOPIC, payload)", self.source)
 
     def test_mqtt_availability_lwt_and_command_subscription_are_configured(self):
@@ -119,9 +131,27 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertIn("mqttClient.subscribe(COMMANDS_TOPIC)", self.source)
         self.assertIn("void handleMqttMessage(char *topic, byte *payload, unsigned int length)", self.source)
 
+    def test_bidirectional_command_handling_is_configured(self):
+        self.assertIn("#include <ArduinoJson.h>", self.source)
+        self.assertIn("bblanchon/ArduinoJson", self.platformio)
+        self.assertIn('const char *COMMAND_READ_NOW = "read_now";', self.source)
+        self.assertIn('const char *COMMAND_SET_INTERVAL = "set_interval";', self.source)
+        self.assertIn("const unsigned long MIN_TELEMETRY_INTERVAL_SECONDS = 5;", self.source)
+        self.assertIn("const unsigned long MAX_TELEMETRY_INTERVAL_SECONDS = 3600;", self.source)
+        self.assertIn("unsigned long telemetryIntervalMs = TELEMETRY_INTERVAL_MS;", self.source)
+        self.assertIn("bool parseCommandPayload(", self.source)
+        self.assertIn("void executeCommand(", self.source)
+        self.assertIn("bool publishCommandResponse(", self.source)
+        self.assertIn("deserializeJson(", self.source)
+        self.assertIn("serializeJson(", self.source)
+        self.assertIn("publishDhtTelemetry();", self.source)
+        self.assertIn("telemetryIntervalMs = request.intervalSeconds * 1000UL;", self.source)
+        self.assertIn("mqttClient.publish(RESPONSES_TOPIC, responsePayload)", self.source)
+
     def test_timing_is_non_blocking_and_status_interval_is_10_seconds(self):
         self.assertIn("const unsigned long STATUS_INTERVAL_MS = 10000;", self.source)
         self.assertIn("const unsigned long TELEMETRY_INTERVAL_MS = 15000;", self.source)
+        self.assertIn("telemetryIntervalMs", self.source)
         self.assertNotIn("delay(", self.source)
         self.assertNotIn("while (!mqttClient.connected())", self.source)
         self.assertNotIn("while (WiFi.status() != WL_CONNECTED)", self.source)

@@ -11,7 +11,7 @@ Goals:
 
 ## ESP32-C3 IoT Sensor Node
 
-This repository includes a PlatformIO project for an ESP32-C3 reusable IoT sensor-node foundation. It connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, publishes retained availability, listens for commands, publishes a compact JSON status payload every 10 seconds, and publishes water level telemetry every 15 seconds.
+This repository includes a PlatformIO project for an ESP32-C3 reusable IoT sensor-node foundation. It connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, publishes retained availability, listens for commands, publishes a compact JSON status payload every 10 seconds, and publishes DHT11 temperature/humidity telemetry every 15 seconds.
 
 The default PlatformIO target is `esp32-c3-devkitm-1`. If your ESP32-C3 board is a different model, update the `board` value in `platformio.ini`.
 
@@ -21,9 +21,8 @@ Configure these values at the top of `src/main.cpp` before uploading:
 - `WIFI_PASSWORD`
 - `MQTT_BROKER_IP`
 - `MQTT_PORT`
-- `WTR_PIN`
-- `WTR_DRY_RAW`
-- `WTR_FULL_RAW`
+- `DHT_PIN`
+- `DHT_TYPE`
 
 ### Device Identity
 
@@ -38,23 +37,24 @@ home/devices/esp32-c3-test/status
 home/devices/esp32-c3-test/availability
 home/devices/esp32-c3-test/telemetry
 home/devices/esp32-c3-test/commands
+home/devices/esp32-c3-test/responses
 ```
 
 OTA is intentionally not implemented yet.
 
-### Water Level Sensor Wiring
+### DHT11 Sensor Wiring
 
-The default water level sensor input is `WTR_PIN = 2`.
+The default DHT11 module data input is `DHT_PIN = 3`.
 
-Wire a simple analog water level sensor like this:
+Wire the DHT11 Temperature Humidity Sensor Module like this:
 
 ```text
-Water sensor VCC  -> ESP32-C3 3V3
-Water sensor GND  -> ESP32-C3 GND
-Water sensor SIG  -> ESP32-C3 GPIO2
+DHT11 module VCC   -> ESP32-C3 3V3
+DHT11 module GND   -> ESP32-C3 GND
+DHT11 module DATA  -> ESP32-C3 GPIO3
 ```
 
-Use a sensor output that stays within the ESP32-C3 ADC input range. After wiring, calibrate `WTR_DRY_RAW` and `WTR_FULL_RAW` in `src/main.cpp` for your specific sensor and container.
+Most DHT11 modules already include a pull-up resistor on the DATA line. If you are using a bare DHT11 sensor instead of a module, add a 10 kOhm pull-up resistor from DATA to 3V3.
 
 ### Availability
 
@@ -76,21 +76,21 @@ Status messages are published every 10 seconds to `home/devices/esp32-c3-test/st
 
 ### Telemetry Payload
 
-Water level telemetry is published every 15 seconds to `home/devices/esp32-c3-test/telemetry`.
+DHT11 telemetry is published every 15 seconds to `home/devices/esp32-c3-test/telemetry`.
 
 Successful sensor reads use this compact JSON shape:
 
 ```json
-{"device":"esp32-c3-test","water_level_percent":72,"sensor_ok":true,"uptime_ms":123456}
+{"device":"esp32-c3-test","temperature_c":23.4,"humidity_percent":56.7,"sensor_ok":true,"uptime_ms":123456}
 ```
 
 If the sensor read fails, the firmware logs a clear Serial error and publishes:
 
 ```json
-{"device":"esp32-c3-test","water_level_percent":null,"sensor_ok":false,"uptime_ms":123456}
+{"device":"esp32-c3-test","temperature_c":null,"humidity_percent":null,"sensor_ok":false,"uptime_ms":123456}
 ```
 
-The failure payload keeps JSON valid and avoids fake numeric water level values.
+The failure payload keeps JSON valid and avoids fake numeric temperature or humidity values.
 
 ### Commands
 
@@ -100,17 +100,57 @@ The firmware subscribes to:
 home/devices/esp32-c3-test/commands
 ```
 
-Incoming command payloads are printed to the Serial monitor. No command actions are implemented yet.
+Command responses are published to:
+
+```text
+home/devices/esp32-c3-test/responses
+```
+
+Incoming command payloads are parsed as JSON, printed to the Serial monitor, executed if supported, and answered with a compact JSON response. Malformed JSON, missing fields, invalid interval values, and unknown commands are rejected gracefully with `success:false`.
+
+Supported commands:
+
+```json
+{"command":"read_now"}
+```
+
+`read_now` immediately reads the DHT11 and publishes one telemetry payload to `home/devices/esp32-c3-test/telemetry`. This manual read does not reset or delay the normal telemetry schedule.
+
+Successful response:
+
+```json
+{"device":"esp32-c3-test","command":"read_now","success":true}
+```
+
+```json
+{"command":"set_interval","interval_seconds":30}
+```
+
+`set_interval` changes the telemetry publish interval while the device is running. `interval_seconds` must be between `5` and `3600` seconds. The setting is temporary and is not saved yet, so it returns to the default after reset or power loss.
+
+Successful response:
+
+```json
+{"device":"esp32-c3-test","command":"set_interval","success":true,"interval_seconds":30}
+```
+
+Failed response example:
+
+```json
+{"device":"esp32-c3-test","command":"set_interval","success":false,"error":"interval_out_of_range"}
+```
+
+Other possible command errors include `malformed_json`, `payload_too_large`, `missing_command`, `unknown_command`, `missing_interval_seconds`, and `invalid_interval_seconds`.
 
 ### Connection Behavior
 
-Wi-Fi and MQTT reconnection are automatic and use non-blocking `millis()` timing. The firmware avoids long delay calls, prints clear Serial logs for connection attempts, retained availability, command messages, status publishing, and water telemetry publishing.
+Wi-Fi and MQTT reconnection are automatic and use non-blocking `millis()` timing. The firmware avoids long delay calls, prints clear Serial logs for connection attempts, retained availability, command messages, status publishing, and DHT11 telemetry publishing.
 
 Expected publish intervals:
 
 ```text
 status:    every 10 seconds
-telemetry: every 15 seconds
+telemetry: every 15 seconds by default; temporary runtime changes can update this
 ```
 
 Useful PlatformIO commands:
@@ -158,10 +198,10 @@ Valid JSON messages are printed with structured fields:
 2026-07-03T12:34:56-06:00 | topic=home/devices/esp32-c3-test/status | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","firmware_version":"0.1.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
 ```
 
-Water telemetry messages look like:
+DHT11 telemetry messages look like:
 
 ```text
-2026-07-03T12:35:06-06:00 | topic=home/devices/esp32-c3-test/telemetry | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","water_level_percent":72,"sensor_ok":true,"uptime_ms":123456}
+2026-07-03T12:35:06-06:00 | topic=home/devices/esp32-c3-test/telemetry | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","temperature_c":23.4,"humidity_percent":56.7,"sensor_ok":true,"uptime_ms":123456}
 ```
 
 Raw non-JSON messages are still printed and logged:

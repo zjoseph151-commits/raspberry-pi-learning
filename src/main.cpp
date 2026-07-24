@@ -13,7 +13,7 @@
 const char *WIFI_SSID = "BananaHammock";
 const char *WIFI_PASSWORD = "MoutainMan69!";
 
-const char *MQTT_BROKER_IP = "10.0.0.179";
+const char *MQTT_BROKER_IP = "10.0.0.180";
 const uint16_t MQTT_PORT = 1883;
 
 // ---------------------------------------------------------------------------

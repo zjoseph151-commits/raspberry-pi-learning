@@ -7,16 +7,19 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MAIN_CPP = PROJECT_ROOT / "src" / "main.cpp"
 PLATFORMIO_INI = PROJECT_ROOT / "platformio.ini"
+GITIGNORE = PROJECT_ROOT / ".gitignore"
+SECRETS_EXAMPLE = PROJECT_ROOT / "include" / "secrets.example.h"
 
 
 class Esp32SensorNodeFoundationTests(unittest.TestCase):
     def setUp(self):
         self.source = MAIN_CPP.read_text(encoding="utf-8")
         self.platformio = PLATFORMIO_INI.read_text(encoding="utf-8")
+        self.gitignore = GITIGNORE.read_text(encoding="utf-8")
 
     def test_device_identity_and_topics_target_esp32_c3_foundation(self):
         self.assertIn('const char *DEVICE_ID = "esp32-c3-test";', self.source)
-        self.assertIn('const char *FIRMWARE_VERSION = "0.1.0";', self.source)
+        self.assertIn('const char *FIRMWARE_VERSION = "0.2.0";', self.source)
         self.assertIn(
             'const char *STATUS_TOPIC = "home/devices/esp32-c3-test/status";',
             self.source,
@@ -48,14 +51,14 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertIsNotNone(match, "STATUS_JSON_FORMAT constant is missing")
 
         format_string = bytes(match.group(1), "utf-8").decode("unicode_escape")
-        sample_payload = format_string % (123456, -57, 180000)
+        sample_payload = format_string % ("0.2.0", 123456, -57, 180000)
         decoded = json.loads(sample_payload)
 
         self.assertEqual(
             decoded,
             {
                 "device": "esp32-c3-test",
-                "firmware_version": "0.1.0",
+                "firmware_version": "0.2.0",
                 "uptime_ms": 123456,
                 "wifi_rssi": -57,
                 "free_heap": 180000,
@@ -63,6 +66,7 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         )
         self.assertNotIn(" ", sample_payload)
         self.assertNotIn("\n", sample_payload)
+        self.assertIn("FIRMWARE_VERSION", self.source)
 
     def test_dht11_sensor_configuration_and_telemetry_topics_are_present(self):
         self.assertIn("#include <DHT.h>", self.source)
@@ -147,6 +151,52 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertIn("publishDhtTelemetry();", self.source)
         self.assertIn("telemetryIntervalMs = request.intervalSeconds * 1000UL;", self.source)
         self.assertIn("mqttClient.publish(RESPONSES_TOPIC, responsePayload)", self.source)
+
+    def test_ota_support_uses_private_secrets_and_non_blocking_loop_service(self):
+        self.assertIn("#include <ArduinoOTA.h>", self.source)
+        self.assertIn('#include "secrets.h"', self.source)
+        self.assertNotIn('const char *WIFI_SSID = "', self.source)
+        self.assertNotIn('const char *WIFI_PASSWORD = "', self.source)
+        self.assertIn("include/secrets.h", self.gitignore)
+        self.assertTrue(SECRETS_EXAMPLE.exists(), "include/secrets.example.h is missing")
+
+        secrets_example = SECRETS_EXAMPLE.read_text(encoding="utf-8")
+        self.assertIn('const char *WIFI_SSID = "your-wifi-ssid";', secrets_example)
+        self.assertIn('const char *WIFI_PASSWORD = "your-wifi-password";', secrets_example)
+        self.assertIn('const char *MQTT_BROKER_IP = "10.0.0.180";', secrets_example)
+        self.assertIn('const char *OTA_PASSWORD = "replace-with-a-strong-ota-password";', secrets_example)
+
+        self.assertIn("const char *OTA_HOSTNAME = DEVICE_ID;", self.source)
+        self.assertIn("bool otaInitialized = false;", self.source)
+        self.assertIn("void setupOTA()", self.source)
+        self.assertIn("void maintainOTA()", self.source)
+        self.assertIn("const unsigned long WIFI_STATUS_LOG_INTERVAL_MS = 5000;", self.source)
+        self.assertIn("const unsigned long OTA_READY_REMINDER_INTERVAL_MS = 10000;", self.source)
+        self.assertIn("const uint8_t OTA_READY_REMINDER_LIMIT = 2;", self.source)
+        self.assertIn("const char *wifiStatusToText(wl_status_t status)", self.source)
+        self.assertIn("void printWiFiConnectStatusIfDue(", self.source)
+        self.assertIn("void printOtaReadyStatus()", self.source)
+        self.assertIn("ArduinoOTA.setHostname(OTA_HOSTNAME);", self.source)
+        self.assertIn("ArduinoOTA.setPassword(OTA_PASSWORD);", self.source)
+        self.assertIn("ArduinoOTA.onStart(", self.source)
+        self.assertIn("ArduinoOTA.onProgress(", self.source)
+        self.assertIn("ArduinoOTA.onEnd(", self.source)
+        self.assertIn("ArduinoOTA.onError(", self.source)
+        self.assertIn("ArduinoOTA.begin();", self.source)
+        self.assertIn("ArduinoOTA.handle();", self.source)
+        self.assertIn("maintainOTA();", self.source)
+        self.assertIn("[OTA]", self.source)
+
+    def test_platformio_keeps_usb_upload_and_adds_ota_environment(self):
+        self.assertIn("[platformio]", self.platformio)
+        self.assertIn("default_envs = esp32-c3-devkitm-1", self.platformio)
+        self.assertIn("[env:esp32-c3-devkitm-1]", self.platformio)
+        self.assertIn("[env:esp32-c3-devkitm-1-ota]", self.platformio)
+        self.assertIn("extends = env:esp32-c3-devkitm-1", self.platformio)
+        self.assertIn("upload_protocol = espota", self.platformio)
+        self.assertIn("upload_port = esp32-c3-test.local", self.platformio)
+        self.assertIn("--auth=${sysenv.ESP32_OTA_PASSWORD}", self.platformio)
+        self.assertIn("board_build.partitions = default.csv", self.platformio)
 
     def test_timing_is_non_blocking_and_status_interval_is_10_seconds(self):
         self.assertIn("const unsigned long STATUS_INTERVAL_MS = 10000;", self.source)

@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+include/secrets.h
 logs/*.log
 logs/*.jsonl
 logs/*.csv

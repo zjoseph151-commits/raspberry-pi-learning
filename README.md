@@ -11,24 +11,37 @@ Goals:
 
 ## ESP32-C3 IoT Sensor Node
 
-This repository includes a PlatformIO project for an ESP32-C3 reusable IoT sensor-node foundation. It connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, publishes retained availability, listens for commands, publishes a compact JSON status payload every 10 seconds, and publishes DHT11 temperature/humidity telemetry every 15 seconds.
+This repository includes a PlatformIO project for an ESP32-C3 reusable IoT sensor-node foundation. It connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, publishes retained availability, listens for commands, publishes command responses, publishes a compact JSON status payload every 10 seconds, publishes DHT11 temperature/humidity telemetry every 15 seconds, and supports local-network Arduino OTA firmware updates.
 
 The default PlatformIO target is `esp32-c3-devkitm-1`. If your ESP32-C3 board is a different model, update the `board` value in `platformio.ini`.
 
-Configure these values at the top of `src/main.cpp` before uploading:
+Copy the secrets template before uploading:
+
+```powershell
+Copy-Item include\secrets.example.h include\secrets.h
+```
+
+Edit `include/secrets.h` with your local private values:
 
 - `WIFI_SSID`
 - `WIFI_PASSWORD`
 - `MQTT_BROKER_IP`
 - `MQTT_PORT`
+- `OTA_PASSWORD`
+
+`include/secrets.h` is ignored by Git. Do not put real credentials in `include/secrets.example.h`.
+
+Configure these hardware values near the top of `src/main.cpp`:
+
 - `DHT_PIN`
 - `DHT_TYPE`
 
 ### Device Identity
 
 - Device ID: `esp32-c3-test`
-- Firmware version: `0.1.0`
+- Firmware version: `0.2.0`
 - MQTT client ID: generated from the device ID and the ESP32 chip identifier, for example `esp32-c3-test-XXXXXXXXXXXX`
+- OTA hostname: `esp32-c3-test`
 
 ### MQTT Topic Structure
 
@@ -40,7 +53,7 @@ home/devices/esp32-c3-test/commands
 home/devices/esp32-c3-test/responses
 ```
 
-OTA is intentionally not implemented yet.
+OTA support is local-network only. This project does not implement Raspberry Pi hosted firmware, MQTT-triggered downloads, HTTP/HTTPS firmware hosting, automatic deployment, fleet management, or automatic update checking yet.
 
 ### DHT11 Sensor Wiring
 
@@ -71,7 +84,7 @@ After a successful MQTT connection, the firmware publishes retained `online` to 
 Status messages are published every 10 seconds to `home/devices/esp32-c3-test/status` and use this compact JSON shape:
 
 ```json
-{"device":"esp32-c3-test","firmware_version":"0.1.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
+{"device":"esp32-c3-test","firmware_version":"0.2.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
 ```
 
 ### Telemetry Payload
@@ -142,6 +155,67 @@ Failed response example:
 
 Other possible command errors include `malformed_json`, `payload_too_large`, `missing_command`, `unknown_command`, `missing_interval_seconds`, and `invalid_interval_seconds`.
 
+### Local-Network OTA
+
+OTA means "over the air": after one successful USB upload, PlatformIO can send later firmware builds to the ESP32 over the local network. The firmware uses the standard Arduino ESP32 OTA service and keeps it available during normal Wi-Fi, MQTT, status, telemetry, and command handling.
+
+OTA starts only after Wi-Fi connects. The Serial monitor prints `[OTA] Ready` with the hostname and IP address when the node can receive OTA uploads. During an update, Serial logs `[OTA]` start, progress, completion, and errors. It does not continuously print OTA messages while idle.
+
+OTA password authentication is enabled with `OTA_PASSWORD` from `include/secrets.h`. PlatformIO OTA uploads use the `ESP32_OTA_PASSWORD` environment variable so the password is not stored in `platformio.ini`.
+
+OTA also requires a partition layout with enough OTA application space. This project explicitly uses `board_build.partitions = default.csv`, which provides OTA app slots for this ESP32-C3 build. If future firmware grows too large, switch to a partition layout with larger OTA app slots before relying on OTA.
+
+If `python -m platformio` reports `No module named platformio` and the path includes `.venv\Scripts\python.exe`, your terminal is using the Raspberry Pi listener virtual environment. That venv does not install PlatformIO by default. In PowerShell, run `deactivate` first, use `pio run ...` if the PlatformIO CLI is on your PATH, or install PlatformIO into the active venv with `python -m pip install platformio`.
+
+Initial USB firmware upload:
+
+```powershell
+python -m platformio run -e esp32-c3-devkitm-1 --target upload
+python -m platformio device monitor
+```
+
+Find the ESP32 IP address using one of these methods:
+
+- Serial monitor: look for `[WiFi] IP address:` or `[OTA] IP address:`
+- Router DHCP lease table
+- Optional mDNS check: `ping esp32-c3-test.local`
+
+Dependable IP-address-based OTA upload from PowerShell:
+
+```powershell
+$env:ESP32_OTA_PASSWORD = "<same value as OTA_PASSWORD in include/secrets.h>"
+python -m platformio run -e esp32-c3-devkitm-1-ota --target upload --upload-port 10.0.0.x
+```
+
+The same OTA upload from Bash:
+
+```bash
+export ESP32_OTA_PASSWORD='<same value as OTA_PASSWORD in include/secrets.h>'
+python -m platformio run -e esp32-c3-devkitm-1-ota --target upload --upload-port 10.0.0.x
+```
+
+If mDNS works on your network, you can try the hostname instead of the IP address:
+
+```powershell
+python -m platformio run -e esp32-c3-devkitm-1-ota --target upload --upload-port esp32-c3-test.local
+```
+
+USB recovery if OTA fails:
+
+```powershell
+python -m platformio run -e esp32-c3-devkitm-1 --target upload
+```
+
+Troubleshooting notes:
+
+- OTA is unavailable until the node has booted OTA-capable firmware from USB at least once.
+- Use the IP address if `esp32-c3-test.local` does not resolve.
+- Make sure your computer and ESP32 are on the same local network.
+- Check firewall rules if the upload cannot connect.
+- If you see an OTA auth error, confirm `ESP32_OTA_PASSWORD` exactly matches `OTA_PASSWORD`.
+- If an OTA upload is interrupted, use USB recovery and try again.
+- If `[WiFi] IP address` and `[OTA] Ready` do not appear, open the Serial monitor first, press reset on the board, and watch the `[WiFi] Waiting for connection` status. `WL_NO_SSID_AVAIL` usually means the SSID cannot be found, `WL_CONNECT_FAILED` often points to credentials, and repeated `WL_DISCONNECTED` means the board still has not joined the network.
+
 ### Connection Behavior
 
 Wi-Fi and MQTT reconnection are automatic and use non-blocking `millis()` timing. The firmware avoids long delay calls, prints clear Serial logs for connection attempts, retained availability, command messages, status publishing, and DHT11 telemetry publishing.
@@ -195,7 +269,7 @@ python -m mqtt_listener.listener
 Valid JSON messages are printed with structured fields:
 
 ```text
-2026-07-03T12:34:56-06:00 | topic=home/devices/esp32-c3-test/status | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","firmware_version":"0.1.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
+2026-07-03T12:34:56-06:00 | topic=home/devices/esp32-c3-test/status | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","firmware_version":"0.2.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
 ```
 
 DHT11 telemetry messages look like:

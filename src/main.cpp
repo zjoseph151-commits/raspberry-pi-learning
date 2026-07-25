@@ -1,20 +1,13 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <DHT.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <math.h>
 #include <string.h>
 
-// ---------------------------------------------------------------------------
-// Wi-Fi and MQTT broker configuration
-// Update these values for your network and Raspberry Pi MQTT broker.
-// ---------------------------------------------------------------------------
-const char *WIFI_SSID = "BananaHammock";
-const char *WIFI_PASSWORD = "MoutainMan69!";
-
-const char *MQTT_BROKER_IP = "10.0.0.180";
-const uint16_t MQTT_PORT = 1883;
+#include "secrets.h"
 
 // ---------------------------------------------------------------------------
 // DHT11 temperature/humidity sensor configuration
@@ -29,7 +22,8 @@ const uint8_t DHT_TYPE = DHT11;
 // foundation for future ESP32-C3 sensor nodes.
 // ---------------------------------------------------------------------------
 const char *DEVICE_ID = "esp32-c3-test";
-const char *FIRMWARE_VERSION = "0.1.0";
+const char *FIRMWARE_VERSION = "0.2.1";
+const char *OTA_HOSTNAME = DEVICE_ID;
 
 const char *STATUS_TOPIC = "home/devices/esp32-c3-test/status";
 const char *AVAILABILITY_TOPIC = "home/devices/esp32-c3-test/availability";
@@ -44,16 +38,19 @@ const char *RESPONSES_TOPIC = "home/devices/esp32-c3-test/responses";
 const unsigned long STATUS_INTERVAL_MS = 10000;
 const unsigned long TELEMETRY_INTERVAL_MS = 15000;
 const unsigned long WIFI_RECONNECT_INTERVAL_MS = 10000;
+const unsigned long WIFI_STATUS_LOG_INTERVAL_MS = 5000;
 const unsigned long MQTT_RECONNECT_INTERVAL_MS = 5000;
 const unsigned long MIN_TELEMETRY_INTERVAL_SECONDS = 5;
 const unsigned long MAX_TELEMETRY_INTERVAL_SECONDS = 3600;
+const unsigned long OTA_READY_REMINDER_INTERVAL_MS = 10000;
+const uint8_t OTA_READY_REMINDER_LIMIT = 2;
 
 const size_t COMMAND_PAYLOAD_BUFFER_SIZE = 256;
 const size_t COMMAND_NAME_BUFFER_SIZE = 32;
 const size_t COMMAND_RESPONSE_BUFFER_SIZE = 192;
 const uint16_t MQTT_PACKET_BUFFER_SIZE = 384;
 
-const char *STATUS_JSON_FORMAT = "{\"device\":\"esp32-c3-test\",\"firmware_version\":\"0.1.0\",\"uptime_ms\":%lu,\"wifi_rssi\":%ld,\"free_heap\":%lu}";
+const char *STATUS_JSON_FORMAT = "{\"device\":\"esp32-c3-test\",\"firmware_version\":\"%s\",\"uptime_ms\":%lu,\"wifi_rssi\":%ld,\"free_heap\":%lu}";
 const char *DHT_TELEMETRY_JSON_FORMAT = "{\"device\":\"esp32-c3-test\",\"temperature_c\":%.1f,\"humidity_percent\":%.1f,\"sensor_ok\":true,\"uptime_ms\":%lu}";
 const char *DHT_TELEMETRY_ERROR_JSON_FORMAT = "{\"device\":\"esp32-c3-test\",\"temperature_c\":null,\"humidity_percent\":null,\"sensor_ok\":false,\"uptime_ms\":%lu}";
 
@@ -100,9 +97,15 @@ String mqttClientId;
 unsigned long lastStatusPublishAt = 0;
 unsigned long lastTelemetryPublishAt = 0;
 unsigned long lastWiFiConnectAttemptAt = 0;
+unsigned long lastWiFiStatusLogAt = 0;
 unsigned long lastMqttConnectAttemptAt = 0;
+unsigned long lastOtaReadyReminderAt = 0;
 unsigned long telemetryIntervalMs = TELEMETRY_INTERVAL_MS;
 bool wifiConnectStarted = false;
+bool otaInitialized = false;
+int lastOtaProgressPercent = -1;
+wl_status_t lastLoggedWiFiStatus = WL_IDLE_STATUS;
+uint8_t otaReadyReminderCount = 0;
 
 bool publishCommandResponse(
     const char *command,
@@ -110,6 +113,7 @@ bool publishCommandResponse(
     const char *error = nullptr,
     unsigned long intervalSeconds = 0,
     bool includeIntervalSeconds = false);
+void printOtaReadyStatus();
 void processCommandPayload(const char *payload);
 
 String buildMqttClientId()
@@ -126,6 +130,29 @@ String buildMqttClientId()
     return String(DEVICE_ID) + "-" + chipIdText;
 }
 
+const char *wifiStatusToText(wl_status_t status)
+{
+    switch (status)
+    {
+    case WL_IDLE_STATUS:
+        return "WL_IDLE_STATUS";
+    case WL_NO_SSID_AVAIL:
+        return "WL_NO_SSID_AVAIL";
+    case WL_SCAN_COMPLETED:
+        return "WL_SCAN_COMPLETED";
+    case WL_CONNECTED:
+        return "WL_CONNECTED";
+    case WL_CONNECT_FAILED:
+        return "WL_CONNECT_FAILED";
+    case WL_CONNECTION_LOST:
+        return "WL_CONNECTION_LOST";
+    case WL_DISCONNECTED:
+        return "WL_DISCONNECTED";
+    default:
+        return "WL_UNKNOWN";
+    }
+}
+
 void printWiFiStatus()
 {
     Serial.println("[WiFi] Connected.");
@@ -134,6 +161,25 @@ void printWiFiStatus()
     Serial.print("[WiFi] RSSI: ");
     Serial.print(WiFi.RSSI());
     Serial.println(" dBm");
+}
+
+void printWiFiConnectStatusIfDue(wl_status_t status, unsigned long now)
+{
+    if (status == lastLoggedWiFiStatus &&
+        lastWiFiStatusLogAt != 0 &&
+        now - lastWiFiStatusLogAt < WIFI_STATUS_LOG_INTERVAL_MS)
+    {
+        return;
+    }
+
+    lastLoggedWiFiStatus = status;
+    lastWiFiStatusLogAt = now;
+
+    Serial.print("[WiFi] Waiting for connection. Status: ");
+    Serial.print(wifiStatusToText(status));
+    Serial.print(" (");
+    Serial.print(static_cast<int>(status));
+    Serial.println(")");
 }
 
 void beginWiFiConnection()
@@ -146,6 +192,8 @@ void beginWiFiConnection()
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    lastLoggedWiFiStatus = WiFi.status();
+    lastWiFiStatusLogAt = lastWiFiConnectAttemptAt;
 }
 
 void maintainWiFiConnection()
@@ -159,6 +207,8 @@ void maintainWiFiConnection()
         if (!wasConnected)
         {
             printWiFiStatus();
+            lastLoggedWiFiStatus = WL_CONNECTED;
+            lastWiFiStatusLogAt = now;
         }
         wasConnected = true;
         return;
@@ -174,6 +224,113 @@ void maintainWiFiConnection()
     if (!wifiConnectStarted || now - lastWiFiConnectAttemptAt >= WIFI_RECONNECT_INTERVAL_MS)
     {
         beginWiFiConnection();
+        return;
+    }
+
+    printWiFiConnectStatusIfDue(WiFi.status(), now);
+}
+
+const char *otaErrorToText(ota_error_t error)
+{
+    switch (error)
+    {
+    case OTA_AUTH_ERROR:
+        return "auth_failed";
+    case OTA_BEGIN_ERROR:
+        return "begin_failed";
+    case OTA_CONNECT_ERROR:
+        return "connect_failed";
+    case OTA_RECEIVE_ERROR:
+        return "receive_failed";
+    case OTA_END_ERROR:
+        return "end_failed";
+    default:
+        return "unknown_error";
+    }
+}
+
+void setupOTA()
+{
+    if (otaInitialized || WiFi.status() != WL_CONNECTED)
+    {
+        return;
+    }
+
+    ArduinoOTA.setHostname(OTA_HOSTNAME);
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+
+    ArduinoOTA.onStart([]()
+                       {
+                           lastOtaProgressPercent = -1;
+                           Serial.print("[OTA] Start: ");
+                           Serial.println(ArduinoOTA.getCommand() == U_FLASH ? "firmware" : "filesystem"); });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                          {
+                              if (total == 0)
+                              {
+                                  return;
+                              }
+
+                              const int progressPercent = static_cast<int>((progress * 100U) / total);
+                              if (lastOtaProgressPercent < 0 ||
+                                  progressPercent >= lastOtaProgressPercent + 10 ||
+                                  progressPercent == 100)
+                              {
+                                  lastOtaProgressPercent = progressPercent;
+                                  Serial.print("[OTA] Progress: ");
+                                  Serial.print(progressPercent);
+                                  Serial.println("%");
+                              } });
+
+    ArduinoOTA.onEnd([]()
+                     {
+                         lastOtaProgressPercent = 100;
+                         Serial.println("[OTA] Complete. Rebooting into updated firmware."); });
+
+    ArduinoOTA.onError([](ota_error_t error)
+                       {
+                           Serial.print("[OTA] Error ");
+                           Serial.print(static_cast<unsigned int>(error));
+                           Serial.print(": ");
+                           Serial.println(otaErrorToText(error)); });
+
+    ArduinoOTA.begin();
+    otaInitialized = true;
+
+    printOtaReadyStatus();
+}
+
+void printOtaReadyStatus()
+{
+    lastOtaReadyReminderAt = millis();
+
+    Serial.print("[OTA] Ready. Hostname: ");
+    Serial.println(OTA_HOSTNAME);
+    Serial.print("[OTA] IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void maintainOTA()
+{
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        return;
+    }
+
+    if (!otaInitialized)
+    {
+        setupOTA();
+    }
+
+    ArduinoOTA.handle();
+
+    const unsigned long now = millis();
+    if (otaReadyReminderCount < OTA_READY_REMINDER_LIMIT &&
+        now - lastOtaReadyReminderAt >= OTA_READY_REMINDER_INTERVAL_MS)
+    {
+        otaReadyReminderCount++;
+        printOtaReadyStatus();
     }
 }
 
@@ -306,6 +463,7 @@ bool buildStatusPayload(char *payload, size_t payloadSize)
         payload,
         payloadSize,
         STATUS_JSON_FORMAT,
+        FIRMWARE_VERSION,
         millis(),
         static_cast<long>(WiFi.RSSI()),
         static_cast<unsigned long>(ESP.getFreeHeap()));
@@ -649,6 +807,7 @@ void setup()
 void loop()
 {
     maintainWiFiConnection();
+    maintainOTA();
     maintainMQTTConnection();
     publishStatusIfDue();
     publishDhtTelemetryIfDue();

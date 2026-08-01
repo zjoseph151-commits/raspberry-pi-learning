@@ -1,0 +1,15 @@
+[Unit]
+Description=MQTT Listener Python Service
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zack
+WorkingDirectory=/home/zack/projects/raspberry-pi
+ExecStart=/home/zack/projects/raspberry-pi/.venv/bin/python /home/zack/projects/raspberry-pi/services/mqtt-listener/listener.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

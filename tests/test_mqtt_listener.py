@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import json
 import io
 import tempfile
@@ -7,15 +8,30 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
-from mqtt_listener.listener import (
-    CSV_PATH,
-    JSONL_PATH,
-    append_log_line,
-    decode_payload,
-    format_log_line,
-    handle_message,
-    parse_json_payload,
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MIGRATED_LISTENER_PATH = PROJECT_ROOT / "services" / "mqtt-listener" / "listener.py"
+
+
+def load_migrated_listener():
+    spec = importlib.util.spec_from_file_location(
+        "migrated_mqtt_listener",
+        MIGRATED_LISTENER_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+mqtt_listener = load_migrated_listener()
+
+CSV_PATH = mqtt_listener.CSV_PATH
+JSONL_PATH = mqtt_listener.JSONL_PATH
+append_log_line = mqtt_listener.append_log_line
+decode_payload = mqtt_listener.decode_payload
+format_log_line = mqtt_listener.format_log_line
+handle_message = mqtt_listener.handle_message
+parse_json_payload = mqtt_listener.parse_json_payload
 
 
 class FakeMessage:
@@ -25,6 +41,17 @@ class FakeMessage:
 
 
 class MqttListenerTests(unittest.TestCase):
+    def test_migrated_listener_module_loads_from_new_service_path(self):
+        self.assertTrue(MIGRATED_LISTENER_PATH.exists())
+        self.assertEqual(mqtt_listener.BROKER_HOST, "localhost")
+        self.assertEqual(mqtt_listener.BROKER_PORT, 1883)
+        self.assertEqual(mqtt_listener.TOPIC_FILTER, "home/#")
+
+    def test_default_runtime_paths_remain_repository_root_relative_logs(self):
+        self.assertEqual(mqtt_listener.LOG_PATH, Path("logs/mqtt_messages.log"))
+        self.assertEqual(mqtt_listener.JSONL_PATH, Path("logs/mqtt_messages.jsonl"))
+        self.assertEqual(mqtt_listener.CSV_PATH, Path("logs/mqtt_messages.csv"))
+
     def test_decode_payload_returns_text_for_utf8_bytes(self):
         self.assertEqual(decode_payload(b'{"status":"online"}'), '{"status":"online"}')
 

@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import io
 import json
 import tempfile
@@ -8,7 +9,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from device_status import CSV_COLUMNS
-from health_monitor import build_status_report, run, write_status_report
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MIGRATED_HEALTH_MONITOR_PATH = (
+    PROJECT_ROOT / "services" / "health-monitor" / "health_monitor.py"
+)
+
+
+def load_migrated_health_monitor():
+    spec = importlib.util.spec_from_file_location(
+        "migrated_health_monitor",
+        MIGRATED_HEALTH_MONITOR_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+health_monitor = load_migrated_health_monitor()
+
+build_status_report = health_monitor.build_status_report
+run = health_monitor.run
+write_status_report = health_monitor.write_status_report
 
 
 class HealthMonitorTests(unittest.TestCase):
@@ -18,6 +41,17 @@ class HealthMonitorTests(unittest.TestCase):
             writer = csv.DictWriter(csv_file, fieldnames=CSV_COLUMNS)
             writer.writeheader()
             writer.writerows(rows)
+
+    def test_migrated_health_monitor_module_loads_from_new_service_path(self):
+        self.assertTrue(MIGRATED_HEALTH_MONITOR_PATH.exists())
+        self.assertEqual(
+            health_monitor.CSV_PATH,
+            Path("logs/mqtt_messages.csv"),
+        )
+        self.assertEqual(
+            health_monitor.STATUS_JSON_PATH,
+            Path("logs/device_status.json"),
+        )
 
     def test_build_status_report_uses_latest_message_per_device(self):
         now = datetime(2026, 7, 5, 12, 0, 0, tzinfo=timezone.utc)

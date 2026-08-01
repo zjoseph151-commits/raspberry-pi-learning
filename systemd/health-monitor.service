@@ -1,0 +1,8 @@
+[Unit]
+Description=IoT Device Health Monitor
+
+[Service]
+Type=oneshot
+User=zack
+WorkingDirectory=/home/zack/projects/raspberry-pi
+ExecStart=/home/zack/projects/raspberry-pi/.venv/bin/python /home/zack/projects/raspberry-pi/services/health-monitor/health_monitor.py

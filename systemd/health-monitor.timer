@@ -1,0 +1,8 @@
+[Unit]
+Description=Run IoT Device Health Monitor Every Minute
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+Unit=health-monitor.service
+Persistent=no

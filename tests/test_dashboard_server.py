@@ -1,4 +1,5 @@
 import http.client
+import importlib.util
 import json
 import tempfile
 import threading
@@ -6,12 +7,29 @@ import unittest
 from html.parser import HTMLParser
 from pathlib import Path
 
-from dashboard_server import (
-    DashboardRequestHandler,
-    build_dashboard_html,
-    load_device_status,
-    make_handler,
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MIGRATED_DASHBOARD_PATH = (
+    PROJECT_ROOT / "services" / "dashboard" / "dashboard_server.py"
 )
+
+
+def load_migrated_dashboard():
+    spec = importlib.util.spec_from_file_location(
+        "migrated_dashboard_server",
+        MIGRATED_DASHBOARD_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+dashboard_server = load_migrated_dashboard()
+
+DashboardRequestHandler = dashboard_server.DashboardRequestHandler
+build_dashboard_html = dashboard_server.build_dashboard_html
+load_device_status = dashboard_server.load_device_status
+make_handler = dashboard_server.make_handler
 
 
 class TitleParser(HTMLParser):
@@ -34,6 +52,15 @@ class TitleParser(HTMLParser):
 
 
 class DashboardServerTests(unittest.TestCase):
+    def test_migrated_dashboard_module_loads_from_new_service_path(self):
+        self.assertTrue(MIGRATED_DASHBOARD_PATH.exists())
+        self.assertEqual(
+            dashboard_server.STATUS_JSON_PATH,
+            Path("logs/device_status.json"),
+        )
+        self.assertEqual(dashboard_server.HOST, "0.0.0.0")
+        self.assertEqual(dashboard_server.PORT, 8080)
+
     def test_load_device_status_handles_missing_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             status_path = Path(temp_dir) / "logs" / "device_status.json"

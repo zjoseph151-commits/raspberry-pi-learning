@@ -1,0 +1,15 @@
+[Unit]
+Description=Pi IoT Dashboard
+After=network-online.target health-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zack
+WorkingDirectory=/home/zack/projects/raspberry-pi
+ExecStart=/home/zack/projects/raspberry-pi/.venv/bin/python /home/zack/projects/raspberry-pi/services/dashboard/dashboard_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

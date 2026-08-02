@@ -41,6 +41,25 @@ WorkingDirectory=/home/zack/projects/raspberry-pi
 
 The legacy root-level `logs/` directory may still exist as historical runtime data during migration, but current services read and write `data/`.
 
+## Configuration
+
+Shared defaults live in:
+
+```text
+config/platform.py
+```
+
+This module centralizes:
+
+- MQTT broker host, port, and topic filter
+- Runtime data paths
+- MQTT CSV columns
+- Device report columns
+- Online threshold
+- Dashboard host and port
+
+The services still expose their previous local constant names as aliases for compatibility, but those values now come from `config/platform.py`.
+
 ## systemd Units
 
 Repository-owned reference units:
@@ -62,6 +81,12 @@ Expected live service names:
 | `iot-dashboard.service` | Serve the local dashboard on port 8080 | `services/dashboard/dashboard_server.py` |
 
 No database, MQTT authentication, or device registry has been added yet.
+
+## Device Onboarding Status
+
+The platform can accept additional MQTT devices now if they publish valid JSON under `home/#` with a `device` field. Those messages are logged, included in JSONL, and can appear in the health monitor and dashboard.
+
+The current dashboard is still a generic health table. Device-specific telemetry fields are preserved in JSONL but are not displayed unless they match the fixed CSV/report columns.
 
 ## Data Flow
 

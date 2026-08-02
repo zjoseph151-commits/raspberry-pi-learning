@@ -272,6 +272,14 @@ WorkingDirectory=/home/zack/projects/raspberry-pi
 
 That keeps relative paths stable while runtime files live under the permanent `data/` directories.
 
+Shared platform defaults live in:
+
+```text
+config/platform.py
+```
+
+That file centralizes MQTT broker settings, runtime data paths, dashboard bind settings, CSV columns, and the health-monitor online threshold. It intentionally uses fixed Python constants for now; environment-variable overrides have not been added yet.
+
 ### Python Setup
 
 Run these commands on the Raspberry Pi from the repository root:
@@ -392,6 +400,22 @@ http://localhost:8080
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows `ONLINE` and `OFFLINE` labels for each device.
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
+
+### Adding Devices
+
+You can already add MQTT devices that publish valid JSON to any topic under `home/#`. To appear in the health monitor and dashboard, each payload should include at least:
+
+```json
+{"device":"example-device"}
+```
+
+The current CSV health view also understands these optional fields:
+
+```json
+{"device":"example-device","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
+```
+
+Messages with other JSON fields are still preserved fully in `data/logs/mqtt_messages.jsonl`, but the current dashboard only displays the fixed health/status columns. Rich device-specific telemetry views, per-device display rules, and a registry are future platform stages.
 
 ### Current Data Flow
 

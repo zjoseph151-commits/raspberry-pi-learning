@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 import json
+import sys
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-STATUS_JSON_PATH = Path("data/status/device_status.json")
-HOST = "0.0.0.0"
-PORT = 8080
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.platform import DASHBOARD_HOST, DASHBOARD_PORT, DEVICE_STATUS_PATH
+
+STATUS_JSON_PATH = DEVICE_STATUS_PATH
+HOST = DASHBOARD_HOST
+PORT = DASHBOARD_PORT
 
 
 def load_device_status(status_path: Path = STATUS_JSON_PATH) -> dict[str, Any]:

@@ -9,6 +9,11 @@ from types import ModuleType
 from typing import Callable, Iterable
 
 SERVICE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.platform import DEVICE_STATUS_PATH
 
 
 def _load_service_device_status() -> ModuleType:
@@ -26,7 +31,7 @@ def _load_service_device_status() -> ModuleType:
 
 device_status = _load_service_device_status()
 
-STATUS_JSON_PATH = Path("data/status/device_status.json")
+STATUS_JSON_PATH = DEVICE_STATUS_PATH
 CSV_PATH = device_status.CSV_PATH
 
 

@@ -2,30 +2,32 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-# ---------------------------------------------------------------------------
-# MQTT listener configuration
-# The Raspberry Pi runs the broker locally, so the listener connects to
-# localhost and subscribes to every topic under the home/ namespace.
-# ---------------------------------------------------------------------------
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
-TOPIC_FILTER = "home/#"
-LOG_PATH = Path("data/logs/mqtt_messages.log")
-JSONL_PATH = Path("data/logs/mqtt_messages.jsonl")
-CSV_PATH = Path("data/logs/mqtt_messages.csv")
-CSV_COLUMNS = [
-    "received_at",
-    "topic",
-    "device",
-    "type",
-    "count",
-    "uptime_ms",
-    "wifi_rssi",
-]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.platform import (
+    MQTT_BROKER_HOST,
+    MQTT_BROKER_PORT,
+    MQTT_CSV_COLUMNS,
+    MQTT_CSV_PATH,
+    MQTT_JSONL_PATH,
+    MQTT_LOG_PATH,
+    MQTT_TOPIC_FILTER,
+)
+
+BROKER_HOST = MQTT_BROKER_HOST
+BROKER_PORT = MQTT_BROKER_PORT
+TOPIC_FILTER = MQTT_TOPIC_FILTER
+LOG_PATH = MQTT_LOG_PATH
+JSONL_PATH = MQTT_JSONL_PATH
+CSV_PATH = MQTT_CSV_PATH
+CSV_COLUMNS = MQTT_CSV_COLUMNS
 
 
 def current_timestamp() -> datetime:

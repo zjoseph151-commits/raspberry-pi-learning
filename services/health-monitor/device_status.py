@@ -1,22 +1,26 @@
 from __future__ import annotations
 
 import csv
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
-CSV_PATH = Path("data/logs/mqtt_messages.csv")
-ONLINE_THRESHOLD = timedelta(seconds=30)
-CSV_COLUMNS = [
-    "received_at",
-    "topic",
-    "device",
-    "type",
-    "count",
-    "uptime_ms",
-    "wifi_rssi",
-]
-REPORT_COLUMNS = ["device", "status", *CSV_COLUMNS[:2], *CSV_COLUMNS[3:]]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config.platform import (
+    DEVICE_REPORT_COLUMNS,
+    MQTT_CSV_COLUMNS,
+    MQTT_CSV_PATH,
+    ONLINE_THRESHOLD_SECONDS,
+)
+
+CSV_PATH = MQTT_CSV_PATH
+ONLINE_THRESHOLD = timedelta(seconds=ONLINE_THRESHOLD_SECONDS)
+CSV_COLUMNS = MQTT_CSV_COLUMNS
+REPORT_COLUMNS = DEVICE_REPORT_COLUMNS
 
 
 def current_timestamp() -> datetime:

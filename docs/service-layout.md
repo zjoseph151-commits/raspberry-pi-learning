@@ -4,6 +4,8 @@ This document records the post-migration Raspberry Pi service layout. It complem
 
 ## Source of Truth
 
+For new chat takeover, read `docs/chat-handoff.md` first, then use this document for the current service layout. Future platform finalization work is tracked in `TODO.md`.
+
 The current service-owned Python entrypoints are:
 
 | Component | Current path | Runtime model |
@@ -84,7 +86,15 @@ No database, MQTT authentication, or device registry has been added yet.
 
 ## Device Onboarding Status
 
-The platform can accept additional MQTT devices now if they publish valid JSON under `home/#` with a `device` field. Those messages are logged, included in JSONL, and can appear in the health monitor and dashboard.
+The platform can accept additional MQTT devices now if they follow the current onboarding contract in `docs/device-onboarding.md`.
+
+Recommended topic shape:
+
+```text
+home/devices/<device-id>/<message-type>
+```
+
+The listener still subscribes to `home/#`, and health grouping still depends on the JSON `device` field rather than parsing the topic path.
 
 The current dashboard is still a generic health table. Device-specific telemetry fields are preserved in JSONL but are not displayed unless they match the fixed CSV/report columns.
 

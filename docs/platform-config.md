@@ -23,6 +23,21 @@ This is the current source of truth for shared constants used by the service-own
 | Dashboard host | `0.0.0.0` |
 | Dashboard port | `8080` |
 
+## Device Onboarding Constants
+
+The shared config also records the current device onboarding contract:
+
+| Setting | Value |
+| --- | --- |
+| Device topic root | `home/devices` |
+| Device topic template | `home/devices/{device_id}/{message_type}` |
+| Topic suffixes | `status`, `availability`, `telemetry`, `commands`, `responses` |
+| Availability values | `online`, `offline` |
+| Required JSON field | `device` |
+| Current health fields | `device`, `type`, `count`, `uptime_ms`, `wifi_rssi` |
+
+The listener still subscribes to `home/#`; these constants define the preferred topic and payload shape for new devices and future platform code.
+
 ## Centralized Columns
 
 The MQTT listener writes these CSV columns:
@@ -72,4 +87,4 @@ New MQTT devices can be added now if they publish valid JSON under `home/#` and 
 
 The current platform will log the message, include valid JSON in JSONL, write fixed CSV fields, and show the device in the health dashboard after the health monitor runs.
 
-For richer device-specific dashboards, the next platform step should define a device onboarding contract: recommended topics, required JSON fields, optional telemetry fields, and how non-health telemetry should be displayed.
+For the complete onboarding contract, see `docs/device-onboarding.md`. Rich device-specific dashboards, per-device display rules, and a registry remain future platform stages.

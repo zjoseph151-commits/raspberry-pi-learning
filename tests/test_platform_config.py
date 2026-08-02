@@ -35,6 +35,17 @@ class PlatformConfigTests(unittest.TestCase):
         self.assertEqual(platform.DASHBOARD_PORT, 8080)
 
     def test_csv_and_report_columns_are_centralized(self):
+        self.assertEqual(platform.DEVICE_REQUIRED_JSON_FIELDS, ["device"])
+        self.assertEqual(
+            platform.DEVICE_HEALTH_FIELDS,
+            [
+                "device",
+                "type",
+                "count",
+                "uptime_ms",
+                "wifi_rssi",
+            ],
+        )
         self.assertEqual(
             platform.MQTT_CSV_COLUMNS,
             [
@@ -60,6 +71,24 @@ class PlatformConfigTests(unittest.TestCase):
                 "wifi_rssi",
             ],
         )
+
+    def test_device_onboarding_topic_contract_is_centralized(self):
+        self.assertEqual(platform.DEVICE_TOPIC_ROOT, "home/devices")
+        self.assertEqual(
+            platform.DEVICE_TOPIC_TEMPLATE,
+            "home/devices/{device_id}/{message_type}",
+        )
+        self.assertEqual(
+            platform.DEVICE_TOPIC_SUFFIXES,
+            [
+                "status",
+                "availability",
+                "telemetry",
+                "commands",
+                "responses",
+            ],
+        )
+        self.assertEqual(platform.DEVICE_AVAILABILITY_VALUES, ["online", "offline"])
 
     def test_services_use_platform_config_aliases(self):
         listener = load_module(

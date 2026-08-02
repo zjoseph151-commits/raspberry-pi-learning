@@ -9,6 +9,20 @@ Goals:
 - Build an IoT server
 - Build a cyberdeck
 
+## Current IoT Platform Handoff
+
+For a new Codex chat taking over this Raspberry Pi IoT platform, start with:
+
+```text
+docs/chat-handoff.md
+TODO.md
+docs/service-layout.md
+docs/platform-config.md
+docs/device-onboarding.md
+```
+
+`docs/chat-handoff.md` includes the current source-of-truth paths, verification commands, known caveats, and a reusable prompt for integrating projects from separate chats without changing this platform repository. `TODO.md` tracks future finalization work.
+
 ## ESP32-C3 IoT Sensor Node
 
 This repository includes a PlatformIO project for an ESP32-C3 reusable IoT sensor-node foundation. It connects to Wi-Fi, connects to an MQTT broker on a Raspberry Pi, publishes retained availability, listens for commands, publishes command responses, publishes a compact JSON status payload every 10 seconds, publishes DHT11 temperature/humidity telemetry every 15 seconds, and supports local-network Arduino OTA firmware updates.
@@ -39,7 +53,7 @@ Configure these hardware values near the top of `src/main.cpp`:
 ### Device Identity
 
 - Device ID: `esp32-c3-test`
-- Firmware version: `0.2.0`
+- Firmware version: `0.2.1`
 - MQTT client ID: generated from the device ID and the ESP32 chip identifier, for example `esp32-c3-test-XXXXXXXXXXXX`
 - OTA hostname: `esp32-c3-test`
 
@@ -84,7 +98,7 @@ After a successful MQTT connection, the firmware publishes retained `online` to 
 Status messages are published every 10 seconds to `home/devices/esp32-c3-test/status` and use this compact JSON shape:
 
 ```json
-{"device":"esp32-c3-test","firmware_version":"0.2.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
+{"device":"esp32-c3-test","firmware_version":"0.2.1","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
 ```
 
 ### Telemetry Payload
@@ -401,9 +415,19 @@ From another computer on the same network, replace `localhost` with the Raspberr
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
-### Adding Devices
+### Device Onboarding Contract
 
-You can already add MQTT devices that publish valid JSON to any topic under `home/#`. To appear in the health monitor and dashboard, each payload should include at least:
+New basic MQTT devices can be added now by following `docs/device-onboarding.md`.
+
+Recommended topic shape:
+
+```text
+home/devices/<device-id>/<message-type>
+```
+
+Supported message types for the current contract are `status`, `availability`, `telemetry`, `commands`, and `responses`.
+
+The MQTT listener still subscribes to all messages under `home/#`. To appear in the health monitor and dashboard, each structured JSON payload should include at least:
 
 ```json
 {"device":"example-device"}
@@ -415,7 +439,9 @@ The current CSV health view also understands these optional fields:
 {"device":"example-device","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-Messages with other JSON fields are still preserved fully in `data/logs/mqtt_messages.jsonl`, but the current dashboard only displays the fixed health/status columns. Rich device-specific telemetry views, per-device display rules, and a registry are future platform stages.
+Messages with other JSON fields are still preserved fully in `data/logs/mqtt_messages.jsonl`, but the current dashboard only displays the fixed health/status columns. Plain-text availability messages are logged but do not currently drive dashboard `ONLINE` or `OFFLINE` state.
+
+See `docs/device-onboarding.md` for the full topic contract, payload examples, command/response notes, verification steps, and current limitations.
 
 ### Current Data Flow
 

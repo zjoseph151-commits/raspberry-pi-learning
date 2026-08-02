@@ -6,6 +6,8 @@ Inspection mode: documentation and read-only inspection only. No implementation,
 
 This document describes the system that exists in the repository and the local workspace at inspection time. Live Raspberry Pi systemd and Mosquitto state could not be verified from this Windows workspace; those sections are marked unresolved and include read-only commands to run directly on the Raspberry Pi.
 
+Post-migration note: this remains the historical baseline inventory from 2026-07-25. For the current service layout, onboarding contract, and new-chat handoff, see `docs/service-layout.md`, `docs/device-onboarding.md`, and `docs/chat-handoff.md`.
+
 ## 1. Executive Summary
 
 The project is a prototype home IoT platform with three main layers:
@@ -24,7 +26,7 @@ Important baseline findings:
 - Newer ESP32 topics such as `responses` are accepted by the listener if JSON, but the CSV schema does not capture command-specific fields like `command`, `success`, or `error`.
 - DHT11 telemetry fields (`temperature_c`, `humidity_percent`, `sensor_ok`) are not included in the current Pi CSV health schema.
 - No systemd unit files are stored in the repository. Live Pi service/timer details are unverified from this workspace.
-- `src/main.cpp` currently reports firmware version `0.2.1`; some repository documentation/tests still appear to reference `0.2.0`. This is an observed current-state inconsistency, not changed here.
+- At inspection time, `src/main.cpp` reported firmware version `0.2.1` while some repository documentation/tests still referenced `0.2.0`. Later handoff documentation aligned README/tests to the source value.
 
 ## 2. System Purpose
 
@@ -796,7 +798,7 @@ Confirmed fragile paths/assumptions:
 | Service ordering unverified | MQTT listener may or may not explicitly wait for Mosquitto/network. |
 | No current database | Runtime state is file-based and order/timing sensitive. |
 | Local `.venv` incomplete on Windows | Active venv lacks `paho` and `platformio`; commands can fail depending on selected Python. |
-| Firmware version inconsistency | `src/main.cpp` shows `0.2.1`; some docs/tests observed `0.2.0`. |
+| Firmware version drift | Firmware version references have diverged before; update source, README examples, and firmware source-contract tests together. |
 
 ## 18. Technical Debt
 
@@ -812,7 +814,7 @@ Confirmed fragile paths/assumptions:
 - ESP32 firmware topic strings and device ID are separately hard-coded.
 - ESP32 firmware relies on a fixed broker address in secrets.
 - Local Python environment state is split: ignored `.venv` does not have app dependencies, while global Python does.
-- Current source, docs, and tests appear to have a firmware version mismatch.
+- Firmware version references had drifted at inspection time; later handoff documentation aligned README/tests to the source value.
 
 ### Recommendations/Inferences for Future Migration
 
@@ -855,7 +857,7 @@ Unverified items that must be resolved before migration:
 10. Which Python interpreter do systemd units use?
 11. Does the Pi venv have `paho-mqtt` installed?
 12. Are real runtime `mqtt_messages.log`, `.jsonl`, and `.csv` files present on the Pi?
-13. Is firmware `0.2.1` the intended current version, or should docs/tests be updated from `0.2.0`?
+13. Resolved after this inventory: firmware `0.2.1` is treated as the current source/docs/tests value.
 14. Should DHT11 telemetry fields be reflected in Pi CSV/health/dashboard before reorganization?
 
 ## 21. Pre-Migration Checklist

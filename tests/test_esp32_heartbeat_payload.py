@@ -19,7 +19,7 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
 
     def test_device_identity_and_topics_target_esp32_c3_foundation(self):
         self.assertIn('const char *DEVICE_ID = "esp32-c3-test";', self.source)
-        self.assertIn('const char *FIRMWARE_VERSION = "0.2.0";', self.source)
+        self.assertIn('const char *FIRMWARE_VERSION = "0.2.1";', self.source)
         self.assertIn(
             'const char *STATUS_TOPIC = "home/devices/esp32-c3-test/status";',
             self.source,
@@ -51,14 +51,14 @@ class Esp32SensorNodeFoundationTests(unittest.TestCase):
         self.assertIsNotNone(match, "STATUS_JSON_FORMAT constant is missing")
 
         format_string = bytes(match.group(1), "utf-8").decode("unicode_escape")
-        sample_payload = format_string % ("0.2.0", 123456, -57, 180000)
+        sample_payload = format_string % ("0.2.1", 123456, -57, 180000)
         decoded = json.loads(sample_payload)
 
         self.assertEqual(
             decoded,
             {
                 "device": "esp32-c3-test",
-                "firmware_version": "0.2.0",
+                "firmware_version": "0.2.1",
                 "uptime_ms": 123456,
                 "wifi_rssi": -57,
                 "free_heap": 180000,

@@ -31,8 +31,10 @@ The migrated health monitor preserves:
 - Empty CSV handling
 - Existing latest-message-per-device status calculation
 - Existing ONLINE threshold of 30 seconds
-- Existing dependency on the root-level `device_status.py` helper
+- Existing dependency on the root-level `device_status.py` helper at the time of this migration stage
 - Existing timer schedule: 30 seconds after boot, then 60 seconds after each run
+
+Follow-up note: a later migration copies `device_status.py` into `services/health-monitor/` so the health monitor service can become self-contained while preserving the same runtime paths and behavior.
 
 ## Working Directory
 
@@ -69,6 +71,8 @@ ExecStart=/home/zack/projects/raspberry-pi/.venv/bin/python /home/zack/projects/
 ## Import Compatibility
 
 The migrated script adds the repository root to `sys.path` before importing `device_status.py`. This is the minimum compatibility adjustment needed because systemd runs the script by absolute path from inside `services/health-monitor/` while the shared helper still lives at the repository root.
+
+Follow-up note: after the device-status helper migration, the script instead prefers the helper copied beside it in `services/health-monitor/`.
 
 ## Manual Deployment
 

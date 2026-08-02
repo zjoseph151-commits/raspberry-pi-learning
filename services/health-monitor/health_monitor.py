@@ -7,14 +7,15 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 # The service runs this file by absolute path while keeping the repository root
-# as WorkingDirectory, so keep the existing root-level device_status import valid.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# as WorkingDirectory. Prefer the helper copied beside this script.
+SERVICE_DIR = Path(__file__).resolve().parent
+if str(SERVICE_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVICE_DIR))
 
-from device_status import CSV_PATH, build_device_reports, current_timestamp, read_csv_rows
+import device_status
 
 STATUS_JSON_PATH = Path("logs/device_status.json")
+CSV_PATH = device_status.CSV_PATH
 
 
 def build_status_report(
@@ -27,7 +28,7 @@ def build_status_report(
     report: dict[str, object] = {
         "generated_at": generated_at.isoformat(timespec="seconds"),
         "source": str(source_path),
-        "devices": build_device_reports(rows, generated_at),
+        "devices": device_status.build_device_reports(rows, generated_at),
     }
 
     if message:
@@ -55,7 +56,7 @@ def print_status_report(report: dict[str, object]) -> None:
 def run(
     csv_path: Path = CSV_PATH,
     json_path: Path = STATUS_JSON_PATH,
-    clock: Callable[[], datetime] = current_timestamp,
+    clock: Callable[[], datetime] = device_status.current_timestamp,
 ) -> int:
     """Read the MQTT CSV log, write JSON status, and print the result."""
     csv_path = Path(csv_path)
@@ -69,7 +70,7 @@ def run(
             f"No CSV log found at {csv_path}.",
         )
     else:
-        rows = read_csv_rows(csv_path)
+        rows = device_status.read_csv_rows(csv_path)
         report = build_status_report(rows, generated_at, csv_path)
         if not report["devices"]:
             report["message"] = f"No device messages found in {csv_path}."

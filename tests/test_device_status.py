@@ -1,4 +1,5 @@
 import csv
+import importlib.util
 import io
 import tempfile
 import unittest
@@ -6,12 +7,29 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
-from device_status import (
-    CSV_COLUMNS,
-    build_device_reports,
-    print_health_report,
-    run,
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MIGRATED_DEVICE_STATUS_PATH = (
+    PROJECT_ROOT / "services" / "health-monitor" / "device_status.py"
 )
+
+
+def load_migrated_device_status():
+    spec = importlib.util.spec_from_file_location(
+        "migrated_device_status",
+        MIGRATED_DEVICE_STATUS_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+device_status = load_migrated_device_status()
+
+CSV_COLUMNS = device_status.CSV_COLUMNS
+build_device_reports = device_status.build_device_reports
+print_health_report = device_status.print_health_report
+run = device_status.run
 
 
 class DeviceStatusTests(unittest.TestCase):
@@ -21,6 +39,23 @@ class DeviceStatusTests(unittest.TestCase):
             writer = csv.DictWriter(csv_file, fieldnames=CSV_COLUMNS)
             writer.writeheader()
             writer.writerows(rows)
+
+    def test_migrated_device_status_module_loads_from_service_path(self):
+        self.assertTrue(MIGRATED_DEVICE_STATUS_PATH.exists())
+        self.assertEqual(device_status.CSV_PATH, Path("logs/mqtt_messages.csv"))
+        self.assertEqual(device_status.ONLINE_THRESHOLD.total_seconds(), 30)
+        self.assertEqual(
+            device_status.CSV_COLUMNS,
+            [
+                "received_at",
+                "topic",
+                "device",
+                "type",
+                "count",
+                "uptime_ms",
+                "wifi_rssi",
+            ],
+        )
 
     def test_run_handles_missing_csv_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:

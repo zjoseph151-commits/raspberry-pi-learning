@@ -8,11 +8,12 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 
-from device_status import CSV_COLUMNS
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MIGRATED_HEALTH_MONITOR_PATH = (
     PROJECT_ROOT / "services" / "health-monitor" / "health_monitor.py"
+)
+MIGRATED_DEVICE_STATUS_PATH = (
+    PROJECT_ROOT / "services" / "health-monitor" / "device_status.py"
 )
 
 
@@ -29,6 +30,7 @@ def load_migrated_health_monitor():
 
 health_monitor = load_migrated_health_monitor()
 
+CSV_COLUMNS = health_monitor.device_status.CSV_COLUMNS
 build_status_report = health_monitor.build_status_report
 run = health_monitor.run
 write_status_report = health_monitor.write_status_report
@@ -51,6 +53,10 @@ class HealthMonitorTests(unittest.TestCase):
         self.assertEqual(
             health_monitor.STATUS_JSON_PATH,
             Path("logs/device_status.json"),
+        )
+        self.assertEqual(
+            Path(health_monitor.device_status.__file__).resolve(),
+            MIGRATED_DEVICE_STATUS_PATH,
         )
 
     def test_build_status_report_uses_latest_message_per_device(self):

@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-STATUS_JSON_PATH = Path("logs/device_status.json")
+STATUS_JSON_PATH = Path("data/status/device_status.json")
 HOST = "0.0.0.0"
 PORT = 8080
 

@@ -56,14 +56,14 @@ class DashboardServerTests(unittest.TestCase):
         self.assertTrue(MIGRATED_DASHBOARD_PATH.exists())
         self.assertEqual(
             dashboard_server.STATUS_JSON_PATH,
-            Path("logs/device_status.json"),
+            Path("data/status/device_status.json"),
         )
         self.assertEqual(dashboard_server.HOST, "0.0.0.0")
         self.assertEqual(dashboard_server.PORT, 8080)
 
     def test_load_device_status_handles_missing_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            status_path = Path(temp_dir) / "logs" / "device_status.json"
+            status_path = Path(temp_dir) / "data" / "status" / "device_status.json"
 
             status = load_device_status(status_path)
 
@@ -146,7 +146,7 @@ class DashboardServerTests(unittest.TestCase):
 
     def test_handler_serves_dashboard_html(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            status_path = Path(temp_dir) / "logs" / "device_status.json"
+            status_path = Path(temp_dir) / "data" / "status" / "device_status.json"
             status_path.parent.mkdir(parents=True, exist_ok=True)
             status_path.write_text(
                 json.dumps(

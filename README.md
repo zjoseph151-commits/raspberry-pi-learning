@@ -270,7 +270,7 @@ The live services intentionally keep:
 WorkingDirectory=/home/zack/projects/raspberry-pi
 ```
 
-That keeps runtime files under the existing repository-root `logs/` directory during this migration phase. Runtime data has not moved to `data/` yet.
+That keeps relative paths stable while runtime files live under the permanent `data/` directories.
 
 ### Python Setup
 
@@ -294,14 +294,14 @@ systemctl status mosquitto --no-pager
 The listener connects to the local MQTT broker at `localhost:1883`, subscribes to `home/#`, prints every received message, and appends the same line to:
 
 ```text
-logs/mqtt_messages.log
+data/logs/mqtt_messages.log
 ```
 
 When a payload is valid JSON, the listener also writes:
 
 ```text
-logs/mqtt_messages.jsonl
-logs/mqtt_messages.csv
+data/logs/mqtt_messages.jsonl
+data/logs/mqtt_messages.csv
 ```
 
 The CSV header is created automatically when the file does not exist:
@@ -330,13 +330,13 @@ systemctl status mqtt-listener.service --no-pager
 The health monitor reads:
 
 ```text
-logs/mqtt_messages.csv
+data/logs/mqtt_messages.csv
 ```
 
 It writes the latest device status snapshot to:
 
 ```text
-logs/device_status.json
+data/status/device_status.json
 ```
 
 The monitor keeps the latest message per `device` and marks a device `ONLINE` when its latest message was received within 30 seconds. Otherwise, the device is `OFFLINE`.
@@ -367,7 +367,7 @@ The optional device status helper can also print a terminal table:
 The dashboard serves a simple local webpage on port `8080` using only the Python standard library. It reads:
 
 ```text
-logs/device_status.json
+data/status/device_status.json
 ```
 
 Manual run from the repository root:
@@ -391,7 +391,7 @@ http://localhost:8080
 
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows `ONLINE` and `OFFLINE` labels for each device.
 
-If `logs/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
+If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
 ### Current Data Flow
 
@@ -399,11 +399,11 @@ If `logs/device_status.json` is missing, the dashboard still loads and shows a f
 flowchart LR
     ESP32["ESP32-C3 sensor node"] --> Mosquitto["Mosquitto localhost:1883"]
     Mosquitto --> Listener["services/mqtt-listener/listener.py"]
-    Listener --> TextLog["logs/mqtt_messages.log"]
-    Listener --> JsonlLog["logs/mqtt_messages.jsonl"]
-    Listener --> CsvLog["logs/mqtt_messages.csv"]
+    Listener --> TextLog["data/logs/mqtt_messages.log"]
+    Listener --> JsonlLog["data/logs/mqtt_messages.jsonl"]
+    Listener --> CsvLog["data/logs/mqtt_messages.csv"]
     CsvLog --> Health["services/health-monitor/health_monitor.py"]
-    Health --> StatusJson["logs/device_status.json"]
+    Health --> StatusJson["data/status/device_status.json"]
     StatusJson --> Dashboard["services/dashboard/dashboard_server.py"]
     Dashboard --> Browser["http://localhost:8080"]
 ```

@@ -47,10 +47,13 @@ class MqttListenerTests(unittest.TestCase):
         self.assertEqual(mqtt_listener.BROKER_PORT, 1883)
         self.assertEqual(mqtt_listener.TOPIC_FILTER, "home/#")
 
-    def test_default_runtime_paths_remain_repository_root_relative_logs(self):
-        self.assertEqual(mqtt_listener.LOG_PATH, Path("logs/mqtt_messages.log"))
-        self.assertEqual(mqtt_listener.JSONL_PATH, Path("logs/mqtt_messages.jsonl"))
-        self.assertEqual(mqtt_listener.CSV_PATH, Path("logs/mqtt_messages.csv"))
+    def test_default_runtime_paths_use_data_logs(self):
+        self.assertEqual(mqtt_listener.LOG_PATH, Path("data/logs/mqtt_messages.log"))
+        self.assertEqual(
+            mqtt_listener.JSONL_PATH,
+            Path("data/logs/mqtt_messages.jsonl"),
+        )
+        self.assertEqual(mqtt_listener.CSV_PATH, Path("data/logs/mqtt_messages.csv"))
 
     def test_decode_payload_returns_text_for_utf8_bytes(self):
         self.assertEqual(decode_payload(b'{"status":"online"}'), '{"status":"online"}')
@@ -101,7 +104,7 @@ class MqttListenerTests(unittest.TestCase):
 
     def test_append_log_line_creates_parent_folder_and_appends_lines(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
+            log_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.log"
 
             append_log_line(log_path, "first")
             append_log_line(log_path, "second")
@@ -110,7 +113,7 @@ class MqttListenerTests(unittest.TestCase):
 
     def test_handle_message_prints_and_logs_json_message_to_all_structured_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
+            log_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.log"
             jsonl_path = Path(temp_dir) / JSONL_PATH
             csv_path = Path(temp_dir) / CSV_PATH
             timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
@@ -190,7 +193,7 @@ class MqttListenerTests(unittest.TestCase):
 
     def test_handle_message_writes_blank_csv_values_for_missing_json_fields(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
+            log_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.log"
             jsonl_path = Path(temp_dir) / JSONL_PATH
             csv_path = Path(temp_dir) / CSV_PATH
             timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
@@ -225,7 +228,7 @@ class MqttListenerTests(unittest.TestCase):
 
     def test_handle_message_does_not_write_invalid_json_to_jsonl_or_csv(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "logs" / "mqtt_messages.log"
+            log_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.log"
             jsonl_path = Path(temp_dir) / JSONL_PATH
             csv_path = Path(temp_dir) / CSV_PATH
             timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)

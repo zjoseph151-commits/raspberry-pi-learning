@@ -48,11 +48,11 @@ class HealthMonitorTests(unittest.TestCase):
         self.assertTrue(MIGRATED_HEALTH_MONITOR_PATH.exists())
         self.assertEqual(
             health_monitor.CSV_PATH,
-            Path("logs/mqtt_messages.csv"),
+            Path("data/logs/mqtt_messages.csv"),
         )
         self.assertEqual(
             health_monitor.STATUS_JSON_PATH,
-            Path("logs/device_status.json"),
+            Path("data/status/device_status.json"),
         )
         self.assertEqual(
             Path(health_monitor.device_status.__file__).resolve(),
@@ -91,7 +91,7 @@ class HealthMonitorTests(unittest.TestCase):
             },
         ]
 
-        source_path = Path("logs/mqtt_messages.csv")
+        source_path = Path("data/logs/mqtt_messages.csv")
 
         report = build_status_report(rows, now, source_path)
 
@@ -127,10 +127,10 @@ class HealthMonitorTests(unittest.TestCase):
 
     def test_write_status_report_creates_parent_folder(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            json_path = Path(temp_dir) / "logs" / "device_status.json"
+            json_path = Path(temp_dir) / "data" / "status" / "device_status.json"
             report = {
                 "generated_at": "2026-07-05T12:00:00+00:00",
-                "source": "logs/mqtt_messages.csv",
+                "source": "data/logs/mqtt_messages.csv",
                 "devices": [],
             }
 
@@ -140,8 +140,8 @@ class HealthMonitorTests(unittest.TestCase):
 
     def test_run_handles_missing_csv_and_writes_empty_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
-            json_path = Path(temp_dir) / "logs" / "device_status.json"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
+            json_path = Path(temp_dir) / "data" / "status" / "device_status.json"
             now = datetime(2026, 7, 5, 12, 0, 0, tzinfo=timezone.utc)
             output = io.StringIO()
 
@@ -160,8 +160,8 @@ class HealthMonitorTests(unittest.TestCase):
 
     def test_run_handles_empty_csv_and_writes_empty_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
-            json_path = Path(temp_dir) / "logs" / "device_status.json"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
+            json_path = Path(temp_dir) / "data" / "status" / "device_status.json"
             csv_path.parent.mkdir(parents=True, exist_ok=True)
             csv_path.write_text("", encoding="utf-8")
             now = datetime(2026, 7, 5, 12, 0, 0, tzinfo=timezone.utc)
@@ -182,8 +182,8 @@ class HealthMonitorTests(unittest.TestCase):
 
     def test_run_writes_and_prints_status_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
-            json_path = Path(temp_dir) / "logs" / "device_status.json"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
+            json_path = Path(temp_dir) / "data" / "status" / "device_status.json"
             self.write_csv(
                 csv_path,
                 [

@@ -25,7 +25,7 @@ class LegacyEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual(module.LEGACY_TARGET_PATH, target_path)
-        self.assertEqual(module.CSV_PATH, Path("logs/mqtt_messages.csv"))
+        self.assertEqual(module.CSV_PATH, Path("data/logs/mqtt_messages.csv"))
         self.assertEqual(module.ONLINE_THRESHOLD.total_seconds(), 30)
         self.assertEqual(
             Path(module.build_device_reports.__code__.co_filename).resolve(),
@@ -45,8 +45,11 @@ class LegacyEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual(module.LEGACY_TARGET_PATH, target_path)
-        self.assertEqual(module.CSV_PATH, Path("logs/mqtt_messages.csv"))
-        self.assertEqual(module.STATUS_JSON_PATH, Path("logs/device_status.json"))
+        self.assertEqual(module.CSV_PATH, Path("data/logs/mqtt_messages.csv"))
+        self.assertEqual(
+            module.STATUS_JSON_PATH,
+            Path("data/status/device_status.json"),
+        )
         self.assertEqual(Path(module.device_status.__file__).resolve(), helper_path)
         self.assertEqual(
             Path(module.build_status_report.__code__.co_filename).resolve(),
@@ -67,7 +70,7 @@ class LegacyEntrypointTests(unittest.TestCase):
         self.assertEqual(module.BROKER_HOST, "localhost")
         self.assertEqual(module.BROKER_PORT, 1883)
         self.assertEqual(module.TOPIC_FILTER, "home/#")
-        self.assertEqual(module.LOG_PATH, Path("logs/mqtt_messages.log"))
+        self.assertEqual(module.LOG_PATH, Path("data/logs/mqtt_messages.log"))
         self.assertEqual(
             module.format_log_line(timestamp, "home/test", b'{"device":"test"}'),
             "2026-07-03T12:34:56+00:00 | topic=home/test | "
@@ -88,7 +91,10 @@ class LegacyEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual(module.LEGACY_TARGET_PATH, target_path)
-        self.assertEqual(module.STATUS_JSON_PATH, Path("logs/device_status.json"))
+        self.assertEqual(
+            module.STATUS_JSON_PATH,
+            Path("data/status/device_status.json"),
+        )
         self.assertEqual(module.HOST, "0.0.0.0")
         self.assertEqual(module.PORT, 8080)
         self.assertIn(

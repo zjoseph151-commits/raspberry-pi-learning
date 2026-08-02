@@ -15,9 +15,9 @@ This stage retires the old root-level implementations without deleting the old p
 
 - Old manual commands still work.
 - Old imports still expose the same main constants and functions.
-- Runtime paths remain under repository-root `logs/`.
+- Runtime paths follow the service-owned implementations, currently under repository-root `data/`.
 - systemd units continue using the already-migrated `services/` paths.
-- No runtime data moves.
+- Runtime data location is controlled by the service-owned implementations.
 
 ## Current Direction
 

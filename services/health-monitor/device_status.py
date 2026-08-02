@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable
 
-CSV_PATH = Path("logs/mqtt_messages.csv")
+CSV_PATH = Path("data/logs/mqtt_messages.csv")
 ONLINE_THRESHOLD = timedelta(seconds=30)
 CSV_COLUMNS = [
     "received_at",

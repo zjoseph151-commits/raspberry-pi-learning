@@ -24,13 +24,13 @@ dashboard_server.py       -> services/dashboard/dashboard_server.py
 
 ## Runtime Paths
 
-Runtime data still lives under repository-root `logs/`:
+Runtime data now lives under repository-root `data/`:
 
 ```text
-logs/mqtt_messages.log
-logs/mqtt_messages.jsonl
-logs/mqtt_messages.csv
-logs/device_status.json
+data/logs/mqtt_messages.log
+data/logs/mqtt_messages.jsonl
+data/logs/mqtt_messages.csv
+data/status/device_status.json
 ```
 
 The systemd units keep:
@@ -39,7 +39,7 @@ The systemd units keep:
 WorkingDirectory=/home/zack/projects/raspberry-pi
 ```
 
-Do not move runtime data to `data/` until a separate migration updates all readers, writers, tests, and service documentation together.
+The legacy root-level `logs/` directory may still exist as historical runtime data during migration, but current services read and write `data/`.
 
 ## systemd Units
 
@@ -61,7 +61,7 @@ Expected live service names:
 | `health-monitor.timer` | Run the health monitor every minute | `health-monitor.service` |
 | `iot-dashboard.service` | Serve the local dashboard on port 8080 | `services/dashboard/dashboard_server.py` |
 
-No database, MQTT authentication, device registry, or runtime data relocation has been added yet.
+No database, MQTT authentication, or device registry has been added yet.
 
 ## Data Flow
 
@@ -69,11 +69,11 @@ No database, MQTT authentication, device registry, or runtime data relocation ha
 flowchart LR
     ESP32["ESP32-C3 sensor node"] --> Broker["Mosquitto on localhost:1883"]
     Broker --> Listener["MQTT listener<br/>services/mqtt-listener/listener.py"]
-    Listener --> TextLog["logs/mqtt_messages.log"]
-    Listener --> JsonlLog["logs/mqtt_messages.jsonl"]
-    Listener --> CsvLog["logs/mqtt_messages.csv"]
+    Listener --> TextLog["data/logs/mqtt_messages.log"]
+    Listener --> JsonlLog["data/logs/mqtt_messages.jsonl"]
+    Listener --> CsvLog["data/logs/mqtt_messages.csv"]
     CsvLog --> Health["Health monitor<br/>services/health-monitor/health_monitor.py"]
-    Health --> StatusJson["logs/device_status.json"]
+    Health --> StatusJson["data/status/device_status.json"]
     StatusJson --> Dashboard["Dashboard<br/>services/dashboard/dashboard_server.py"]
     Dashboard --> Browser["Browser<br/>http://localhost:8080"]
 ```
@@ -111,10 +111,10 @@ journalctl -u iot-dashboard.service -n 50 --no-pager
 Check runtime files:
 
 ```bash
-ls -l logs/mqtt_messages.log
-ls -l logs/mqtt_messages.jsonl
-ls -l logs/mqtt_messages.csv
-ls -l logs/device_status.json
+ls -l data/logs/mqtt_messages.log
+ls -l data/logs/mqtt_messages.jsonl
+ls -l data/logs/mqtt_messages.csv
+ls -l data/status/device_status.json
 ```
 
 ## Rollback Notes

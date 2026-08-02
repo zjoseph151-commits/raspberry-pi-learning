@@ -26,7 +26,7 @@ def _load_service_device_status() -> ModuleType:
 
 device_status = _load_service_device_status()
 
-STATUS_JSON_PATH = Path("logs/device_status.json")
+STATUS_JSON_PATH = Path("data/status/device_status.json")
 CSV_PATH = device_status.CSV_PATH
 
 

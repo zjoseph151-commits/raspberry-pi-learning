@@ -42,7 +42,7 @@ class DeviceStatusTests(unittest.TestCase):
 
     def test_migrated_device_status_module_loads_from_service_path(self):
         self.assertTrue(MIGRATED_DEVICE_STATUS_PATH.exists())
-        self.assertEqual(device_status.CSV_PATH, Path("logs/mqtt_messages.csv"))
+        self.assertEqual(device_status.CSV_PATH, Path("data/logs/mqtt_messages.csv"))
         self.assertEqual(device_status.ONLINE_THRESHOLD.total_seconds(), 30)
         self.assertEqual(
             device_status.CSV_COLUMNS,
@@ -59,7 +59,7 @@ class DeviceStatusTests(unittest.TestCase):
 
     def test_run_handles_missing_csv_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
             output = io.StringIO()
 
             with redirect_stdout(output):
@@ -73,7 +73,7 @@ class DeviceStatusTests(unittest.TestCase):
 
     def test_run_handles_empty_csv_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
             csv_path.parent.mkdir(parents=True, exist_ok=True)
             csv_path.write_text("", encoding="utf-8")
             output = io.StringIO()
@@ -192,7 +192,7 @@ class DeviceStatusTests(unittest.TestCase):
 
     def test_run_reads_csv_and_prints_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            csv_path = Path(temp_dir) / "logs" / "mqtt_messages.csv"
+            csv_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.csv"
             self.write_csv(
                 csv_path,
                 [

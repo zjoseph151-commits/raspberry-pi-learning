@@ -14,9 +14,9 @@ from typing import Any, Callable
 BROKER_HOST = "localhost"
 BROKER_PORT = 1883
 TOPIC_FILTER = "home/#"
-LOG_PATH = Path("logs/mqtt_messages.log")
-JSONL_PATH = Path("logs/mqtt_messages.jsonl")
-CSV_PATH = Path("logs/mqtt_messages.csv")
+LOG_PATH = Path("data/logs/mqtt_messages.log")
+JSONL_PATH = Path("data/logs/mqtt_messages.jsonl")
+CSV_PATH = Path("data/logs/mqtt_messages.csv")
 CSV_COLUMNS = [
     "received_at",
     "topic",

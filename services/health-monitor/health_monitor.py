@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Callable, Iterable
 
-# The service runs this file by absolute path while keeping the repository root
-# as WorkingDirectory. Prefer the helper copied beside this script.
 SERVICE_DIR = Path(__file__).resolve().parent
-if str(SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(SERVICE_DIR))
 
-import device_status
+
+def _load_service_device_status() -> ModuleType:
+    """Load the helper beside this script without depending on import order."""
+    module_path = SERVICE_DIR / "device_status.py"
+    spec = importlib.util.spec_from_file_location(
+        "service_health_monitor_device_status",
+        module_path,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+device_status = _load_service_device_status()
 
 STATUS_JSON_PATH = Path("logs/device_status.json")
 CSV_PATH = device_status.CSV_PATH

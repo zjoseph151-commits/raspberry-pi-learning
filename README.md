@@ -235,15 +235,46 @@ python -m platformio run --target upload
 python -m platformio device monitor
 ```
 
-## Raspberry Pi MQTT Listener
+## Raspberry Pi IoT Platform
 
-The Python listener connects to the MQTT broker running on the Raspberry Pi at `localhost:1883`, subscribes to `home/#`, prints every received message, and appends the same line to `logs/mqtt_messages.log`.
+The Raspberry Pi side is now organized around service-owned application folders. The current source-of-truth scripts are:
 
-When a payload is valid JSON, the listener also appends a structured JSON Lines record to `logs/mqtt_messages.jsonl` and a CSV row to `logs/mqtt_messages.csv`. Database support is not included yet.
+```text
+services/mqtt-listener/listener.py
+services/health-monitor/health_monitor.py
+services/health-monitor/device_status.py
+services/dashboard/dashboard_server.py
+```
 
-### Setup
+Legacy root-level scripts are now compatibility wrappers. They are retained temporarily so old manual commands and imports still work, but they delegate to the service-owned files above. New service work should target the `services/` layout.
 
-Run these commands on the Raspberry Pi:
+```text
+mqtt_listener/listener.py -> services/mqtt-listener/listener.py
+health_monitor.py         -> services/health-monitor/health_monitor.py
+device_status.py          -> services/health-monitor/device_status.py
+dashboard_server.py       -> services/dashboard/dashboard_server.py
+```
+
+The repository also stores reference systemd units:
+
+```text
+systemd/mqtt-listener.service
+systemd/health-monitor.service
+systemd/health-monitor.timer
+systemd/iot-dashboard.service
+```
+
+The live services intentionally keep:
+
+```ini
+WorkingDirectory=/home/zack/projects/raspberry-pi
+```
+
+That keeps runtime files under the existing repository-root `logs/` directory during this migration phase. Runtime data has not moved to `data/` yet.
+
+### Python Setup
+
+Run these commands on the Raspberry Pi from the repository root:
 
 ```bash
 python3 -m venv .venv
@@ -252,77 +283,104 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Make sure your MQTT broker is running locally. For Mosquitto, one quick check is:
+Make sure Mosquitto is running locally:
 
 ```bash
-systemctl status mosquitto
+systemctl status mosquitto --no-pager
 ```
 
-### Run
+### MQTT Listener
 
-Start the listener from the repository root:
-
-```bash
-python -m mqtt_listener.listener
-```
-
-Valid JSON messages are printed with structured fields:
+The listener connects to the local MQTT broker at `localhost:1883`, subscribes to `home/#`, prints every received message, and appends the same line to:
 
 ```text
-2026-07-03T12:34:56-06:00 | topic=home/devices/esp32-c3-test/status | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","firmware_version":"0.2.0","uptime_ms":123456,"wifi_rssi":-57,"free_heap":180000}
+logs/mqtt_messages.log
 ```
 
-DHT11 telemetry messages look like:
+When a payload is valid JSON, the listener also writes:
 
 ```text
-2026-07-03T12:35:06-06:00 | topic=home/devices/esp32-c3-test/telemetry | device=esp32-c3-test | type= | payload={"device":"esp32-c3-test","temperature_c":23.4,"humidity_percent":56.7,"sensor_ok":true,"uptime_ms":123456}
+logs/mqtt_messages.jsonl
+logs/mqtt_messages.csv
 ```
 
-Raw non-JSON messages are still printed and logged:
-
-```text
-2026-07-03T12:35:01-06:00 | topic=home/sensor/raw | payload=not json
-```
-
-The listener creates the `logs/` folder if needed, appends all messages to `logs/mqtt_messages.log`, and appends valid JSON messages to `logs/mqtt_messages.jsonl` as records with `received_at`, `topic`, and `payload`.
-
-Valid JSON messages are also appended to `logs/mqtt_messages.csv`. The CSV header is created automatically when the file does not exist:
+The CSV header is created automatically when the file does not exist:
 
 ```csv
 received_at,topic,device,type,count,uptime_ms,wifi_rssi
 ```
 
-Missing JSON fields are written as blank CSV values.
+Missing JSON fields are written as blank CSV values. Raw non-JSON messages, such as retained availability payloads, are still written to the plain text log without crashing the listener.
 
-### Device Health Report
-
-After the listener has written `logs/mqtt_messages.csv`, run the device status utility from the repository root:
+Manual run from the repository root:
 
 ```bash
-python device_status.py
+/home/zack/projects/raspberry-pi/.venv/bin/python \
+  services/mqtt-listener/listener.py
 ```
 
-The report groups messages by `device` and shows the latest `received_at`, `topic`, `type`, `count`, `uptime_ms`, and `wifi_rssi` for each device. A device is shown as `ONLINE` when its latest message was received within the last 30 seconds; otherwise it is shown as `OFFLINE`.
-
-If `logs/mqtt_messages.csv` is missing or empty, the script prints a friendly message and exits without an error.
-
-### Automated Health Monitor
-
-Run the health monitor to write the latest device status snapshot to `logs/device_status.json` and print the same JSON report to the terminal:
+Live service:
 
 ```bash
-python health_monitor.py
+systemctl status mqtt-listener.service --no-pager
 ```
 
-The monitor reads `logs/mqtt_messages.csv`, keeps the latest message per `device`, and marks devices `ONLINE` when the latest message is within 30 seconds. Missing or empty CSV input produces an empty `devices` list with a friendly `message` field.
+### Health Monitor
+
+The health monitor reads:
+
+```text
+logs/mqtt_messages.csv
+```
+
+It writes the latest device status snapshot to:
+
+```text
+logs/device_status.json
+```
+
+The monitor keeps the latest message per `device` and marks a device `ONLINE` when its latest message was received within 30 seconds. Otherwise, the device is `OFFLINE`.
+
+Manual run from the repository root:
+
+```bash
+/home/zack/projects/raspberry-pi/.venv/bin/python \
+  services/health-monitor/health_monitor.py
+```
+
+Live timer/service:
+
+```bash
+systemctl status health-monitor.timer --no-pager
+systemctl status health-monitor.service --no-pager
+```
+
+The optional device status helper can also print a terminal table:
+
+```bash
+/home/zack/projects/raspberry-pi/.venv/bin/python \
+  services/health-monitor/device_status.py
+```
 
 ### Web Dashboard
 
-The dashboard serves a simple local webpage on port `8080` using only the Python standard library. It reads `logs/device_status.json`, so run the health monitor first whenever you want to refresh the status snapshot:
+The dashboard serves a simple local webpage on port `8080` using only the Python standard library. It reads:
+
+```text
+logs/device_status.json
+```
+
+Manual run from the repository root:
 
 ```bash
-python health_monitor.py
-python dashboard_server.py
+/home/zack/projects/raspberry-pi/.venv/bin/python \
+  services/dashboard/dashboard_server.py
+```
+
+Live service:
+
+```bash
+systemctl status iot-dashboard.service --no-pager
 ```
 
 Open the dashboard on the Raspberry Pi at:
@@ -334,3 +392,43 @@ http://localhost:8080
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows `ONLINE` and `OFFLINE` labels for each device.
 
 If `logs/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
+
+### Current Data Flow
+
+```mermaid
+flowchart LR
+    ESP32["ESP32-C3 sensor node"] --> Mosquitto["Mosquitto localhost:1883"]
+    Mosquitto --> Listener["services/mqtt-listener/listener.py"]
+    Listener --> TextLog["logs/mqtt_messages.log"]
+    Listener --> JsonlLog["logs/mqtt_messages.jsonl"]
+    Listener --> CsvLog["logs/mqtt_messages.csv"]
+    CsvLog --> Health["services/health-monitor/health_monitor.py"]
+    Health --> StatusJson["logs/device_status.json"]
+    StatusJson --> Dashboard["services/dashboard/dashboard_server.py"]
+    Dashboard --> Browser["http://localhost:8080"]
+```
+
+### Service Verification
+
+After deployment or reboot, check:
+
+```bash
+systemctl status mqtt-listener.service --no-pager
+systemctl status health-monitor.timer --no-pager
+systemctl status health-monitor.service --no-pager
+systemctl status iot-dashboard.service --no-pager
+journalctl -u mqtt-listener.service -n 50 --no-pager
+journalctl -u health-monitor.service -n 50 --no-pager
+journalctl -u iot-dashboard.service -n 50 --no-pager
+```
+
+Confirm each live `ExecStart` points into `services/`:
+
+```bash
+systemctl show mqtt-listener.service \
+  -p ExecStart -p WorkingDirectory --no-pager
+systemctl show health-monitor.service \
+  -p ExecStart -p WorkingDirectory --no-pager
+systemctl show iot-dashboard.service \
+  -p ExecStart -p WorkingDirectory --no-pager
+```

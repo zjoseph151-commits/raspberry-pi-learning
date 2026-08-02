@@ -1,81 +1,52 @@
 from __future__ import annotations
 
-import json
-import sys
-from datetime import datetime
+import importlib.util
 from pathlib import Path
-from typing import Callable, Iterable
+from types import ModuleType
 
-from device_status import CSV_PATH, build_device_reports, current_timestamp, read_csv_rows
-
-STATUS_JSON_PATH = Path("logs/device_status.json")
-
-
-def build_status_report(
-    rows: Iterable[dict[str, str]],
-    generated_at: datetime,
-    source_path: Path,
-    message: str | None = None,
-) -> dict[str, object]:
-    """Build the latest per-device status snapshot written by the monitor."""
-    report: dict[str, object] = {
-        "generated_at": generated_at.isoformat(timespec="seconds"),
-        "source": str(source_path),
-        "devices": build_device_reports(rows, generated_at),
-    }
-
-    if message:
-        report["message"] = message
-
-    return report
+LEGACY_TARGET_PATH = (
+    Path(__file__).resolve().parent
+    / "services"
+    / "health-monitor"
+    / "health_monitor.py"
+)
 
 
-def write_status_report(json_path: Path, report: dict[str, object]) -> None:
-    """Create the logs folder if needed and write the latest JSON snapshot."""
-    json_path = Path(json_path)
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with json_path.open("w", encoding="utf-8") as json_file:
-        json.dump(report, json_file, indent=2)
-        json_file.write("\n")
-
-
-def print_status_report(report: dict[str, object]) -> None:
-    """Print the same JSON report that is written to disk."""
-    json.dump(report, sys.stdout, indent=2)
-    print()
+def _load_target() -> ModuleType:
+    """Load the service-owned health monitor entrypoint."""
+    spec = importlib.util.spec_from_file_location(
+        "service_health_monitor_legacy_wrapper",
+        LEGACY_TARGET_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
-def run(
-    csv_path: Path = CSV_PATH,
-    json_path: Path = STATUS_JSON_PATH,
-    clock: Callable[[], datetime] = current_timestamp,
-) -> int:
-    """Read the MQTT CSV log, write JSON status, and print the result."""
-    csv_path = Path(csv_path)
-    generated_at = clock()
+_target = _load_target()
 
-    if not csv_path.exists():
-        report = build_status_report(
-            [],
-            generated_at,
-            csv_path,
-            f"No CSV log found at {csv_path}.",
-        )
-    else:
-        rows = read_csv_rows(csv_path)
-        report = build_status_report(rows, generated_at, csv_path)
-        if not report["devices"]:
-            report["message"] = f"No device messages found in {csv_path}."
+device_status = _target.device_status
+STATUS_JSON_PATH = _target.STATUS_JSON_PATH
+CSV_PATH = _target.CSV_PATH
 
-    write_status_report(json_path, report)
-    print_status_report(report)
-    return 0
+build_status_report = _target.build_status_report
+write_status_report = _target.write_status_report
+print_status_report = _target.print_status_report
+run = _target.run
+main = _target.main
 
-
-def main() -> int:
-    """CLI entrypoint for `python health_monitor.py`."""
-    return run()
+__all__ = [
+    "LEGACY_TARGET_PATH",
+    "device_status",
+    "STATUS_JSON_PATH",
+    "CSV_PATH",
+    "build_status_report",
+    "write_status_report",
+    "print_status_report",
+    "run",
+    "main",
+]
 
 
 if __name__ == "__main__":

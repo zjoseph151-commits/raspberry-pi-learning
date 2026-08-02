@@ -1,224 +1,76 @@
 from __future__ import annotations
 
-import csv
-import json
-from datetime import datetime
+import importlib.util
 from pathlib import Path
-from typing import Any, Callable
+from types import ModuleType
 
-# ---------------------------------------------------------------------------
-# MQTT listener configuration
-# The Raspberry Pi runs the broker locally, so the listener connects to
-# localhost and subscribes to every topic under the home/ namespace.
-# ---------------------------------------------------------------------------
-BROKER_HOST = "localhost"
-BROKER_PORT = 1883
-TOPIC_FILTER = "home/#"
-LOG_PATH = Path("logs/mqtt_messages.log")
-JSONL_PATH = Path("logs/mqtt_messages.jsonl")
-CSV_PATH = Path("logs/mqtt_messages.csv")
-CSV_COLUMNS = [
-    "received_at",
-    "topic",
-    "device",
-    "type",
-    "count",
-    "uptime_ms",
-    "wifi_rssi",
+LEGACY_TARGET_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "services"
+    / "mqtt-listener"
+    / "listener.py"
+)
+
+
+def _load_target() -> ModuleType:
+    """Load the service-owned MQTT listener."""
+    spec = importlib.util.spec_from_file_location(
+        "service_mqtt_listener_legacy_wrapper",
+        LEGACY_TARGET_PATH,
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+_target = _load_target()
+
+BROKER_HOST = _target.BROKER_HOST
+BROKER_PORT = _target.BROKER_PORT
+TOPIC_FILTER = _target.TOPIC_FILTER
+LOG_PATH = _target.LOG_PATH
+JSONL_PATH = _target.JSONL_PATH
+CSV_PATH = _target.CSV_PATH
+CSV_COLUMNS = _target.CSV_COLUMNS
+
+current_timestamp = _target.current_timestamp
+decode_payload = _target.decode_payload
+parse_json_payload = _target.parse_json_payload
+compact_json = _target.compact_json
+format_log_line = _target.format_log_line
+format_jsonl_record = _target.format_jsonl_record
+format_csv_row = _target.format_csv_row
+append_log_line = _target.append_log_line
+append_jsonl_record = _target.append_jsonl_record
+append_csv_row = _target.append_csv_row
+handle_message = _target.handle_message
+create_mqtt_client = _target.create_mqtt_client
+run_listener = _target.run_listener
+
+__all__ = [
+    "LEGACY_TARGET_PATH",
+    "BROKER_HOST",
+    "BROKER_PORT",
+    "TOPIC_FILTER",
+    "LOG_PATH",
+    "JSONL_PATH",
+    "CSV_PATH",
+    "CSV_COLUMNS",
+    "current_timestamp",
+    "decode_payload",
+    "parse_json_payload",
+    "compact_json",
+    "format_log_line",
+    "format_jsonl_record",
+    "format_csv_row",
+    "append_log_line",
+    "append_jsonl_record",
+    "append_csv_row",
+    "handle_message",
+    "create_mqtt_client",
+    "run_listener",
 ]
-
-
-def current_timestamp() -> datetime:
-    """Return a local timezone-aware timestamp for each received message."""
-    return datetime.now().astimezone()
-
-
-def decode_payload(payload: bytes | str) -> str:
-    """Convert MQTT payload bytes into printable text without crashing."""
-    if isinstance(payload, bytes):
-        return payload.decode("utf-8", errors="replace")
-    return str(payload)
-
-
-def parse_json_payload(payload_text: str) -> Any | None:
-    """Return parsed JSON when payload_text is valid JSON, otherwise None."""
-    try:
-        return json.loads(payload_text)
-    except json.JSONDecodeError:
-        return None
-
-
-def compact_json(value: Any) -> str:
-    """Render JSON without extra whitespace for logs and terminal output."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def format_log_line(timestamp: datetime, topic: str, payload: bytes | str) -> str:
-    """Build the single line printed to stdout and appended to the log file."""
-    payload_text = decode_payload(payload)
-    parsed_payload = parse_json_payload(payload_text)
-    prefix = f"{timestamp.isoformat(timespec='seconds')} | topic={topic}"
-
-    if parsed_payload is None:
-        return f"{prefix} | payload={payload_text}"
-
-    device = parsed_payload.get("device", "") if isinstance(parsed_payload, dict) else ""
-    message_type = parsed_payload.get("type", "") if isinstance(parsed_payload, dict) else ""
-
-    return (
-        f"{prefix} | device={device} | type={message_type} | "
-        f"payload={compact_json(parsed_payload)}"
-    )
-
-
-def format_jsonl_record(timestamp: datetime, topic: str, payload_object: Any) -> str:
-    """Build one JSON Lines record for a valid JSON MQTT payload."""
-    return compact_json(
-        {
-            "received_at": timestamp.isoformat(timespec="seconds"),
-            "topic": topic,
-            "payload": payload_object,
-        }
-    )
-
-
-def format_csv_row(timestamp: datetime, topic: str, payload_object: Any) -> dict[str, Any]:
-    """Build one CSV row, leaving blanks when expected JSON fields are absent."""
-    payload = payload_object if isinstance(payload_object, dict) else {}
-
-    return {
-        "received_at": timestamp.isoformat(timespec="seconds"),
-        "topic": topic,
-        "device": payload.get("device", ""),
-        "type": payload.get("type", ""),
-        "count": payload.get("count", ""),
-        "uptime_ms": payload.get("uptime_ms", ""),
-        "wifi_rssi": payload.get("wifi_rssi", ""),
-    }
-
-
-def append_log_line(log_path: Path, line: str) -> None:
-    """Create the log folder if needed, then append one message line."""
-    log_path = Path(log_path)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with log_path.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"{line}\n")
-
-
-def append_jsonl_record(jsonl_path: Path, line: str) -> None:
-    """Create the JSONL folder if needed, then append one JSON record."""
-    append_log_line(jsonl_path, line)
-
-
-def append_csv_row(csv_path: Path, row: dict[str, Any]) -> None:
-    """Create the CSV log if needed, write a header once, then append row."""
-    csv_path = Path(csv_path)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    should_write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-
-    with csv_path.open("a", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=CSV_COLUMNS)
-        if should_write_header:
-            writer.writeheader()
-        writer.writerow(row)
-
-
-def handle_message(
-    message,
-    log_path: Path = LOG_PATH,
-    clock: Callable[[], datetime] = current_timestamp,
-    jsonl_path: Path = JSONL_PATH,
-    csv_path: Path = CSV_PATH,
-) -> None:
-    """Print and persist one MQTT message received by paho-mqtt."""
-    received_at = clock()
-    payload_text = decode_payload(message.payload)
-    parsed_payload = parse_json_payload(payload_text)
-    line = format_log_line(received_at, message.topic, payload_text)
-
-    print(line, flush=True)
-    append_log_line(log_path, line)
-
-    if parsed_payload is not None:
-        append_jsonl_record(
-            jsonl_path,
-            format_jsonl_record(received_at, message.topic, parsed_payload),
-        )
-        append_csv_row(
-            csv_path,
-            format_csv_row(received_at, message.topic, parsed_payload),
-        )
-
-
-def create_mqtt_client(
-    broker_host: str = BROKER_HOST,
-    broker_port: int = BROKER_PORT,
-    topic_filter: str = TOPIC_FILTER,
-    log_path: Path = LOG_PATH,
-    jsonl_path: Path = JSONL_PATH,
-    csv_path: Path = CSV_PATH,
-):
-    """Create and configure a paho-mqtt client for this listener.
-
-    paho owns reconnect handling once loop_forever() is running. The callbacks
-    below keep startup and reconnect status visible in the terminal.
-    """
-    from paho.mqtt import client as mqtt
-
-    try:
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    except AttributeError:
-        client = mqtt.Client()
-
-    def on_connect(client, userdata, flags, reason_code, properties=None):
-        if reason_code == 0:
-            print(
-                f"[MQTT] Connected to {broker_host}:{broker_port}; "
-                f"subscribing to {topic_filter}",
-                flush=True,
-            )
-            client.subscribe(topic_filter)
-        else:
-            print(f"[MQTT] Connection failed with code {reason_code}", flush=True)
-
-    def on_disconnect(client, userdata, disconnect_flags=None, reason_code=None, properties=None):
-        if reason_code is None:
-            reason_code = disconnect_flags
-        print(f"[MQTT] Disconnected with code {reason_code}; paho will reconnect.", flush=True)
-
-    def on_subscribe(client, userdata, mid, reason_codes=None, properties=None):
-        print(f"[MQTT] Subscription confirmed for {topic_filter}", flush=True)
-
-    def on_message(client, userdata, message):
-        handle_message(message, log_path, jsonl_path=jsonl_path, csv_path=csv_path)
-
-    client.on_connect = on_connect
-    client.on_disconnect = on_disconnect
-    client.on_subscribe = on_subscribe
-    client.on_message = on_message
-
-    return client
-
-
-def run_listener() -> None:
-    """Connect to the local broker and process messages until interrupted."""
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    client = create_mqtt_client()
-
-    print(
-        f"[MQTT] Starting listener for {TOPIC_FILTER} on "
-        f"{BROKER_HOST}:{BROKER_PORT}",
-        flush=True,
-    )
-    print(f"[MQTT] Appending messages to {LOG_PATH}", flush=True)
-    print(f"[MQTT] Appending valid JSON messages to {JSONL_PATH}", flush=True)
-    print(f"[MQTT] Appending valid JSON CSV rows to {CSV_PATH}", flush=True)
-
-    client.connect_async(BROKER_HOST, BROKER_PORT, keepalive=60)
-    client.loop_forever(retry_first_connection=True)
 
 
 if __name__ == "__main__":

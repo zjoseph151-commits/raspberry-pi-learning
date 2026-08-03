@@ -32,8 +32,13 @@ PORT = _target.PORT
 
 load_device_status = _target.load_device_status
 text = _target.text
+age_label = _target.age_label
+freshness_badge = _target.freshness_badge
 status_badge = _target.status_badge
+availability_badge = _target.availability_badge
 render_device_row = _target.render_device_row
+render_device_detail_row = _target.render_device_detail_row
+render_device_rows = _target.render_device_rows
 build_dashboard_html = _target.build_dashboard_html
 make_handler = _target.make_handler
 DashboardRequestHandler = _target.DashboardRequestHandler
@@ -47,8 +52,13 @@ __all__ = [
     "PORT",
     "load_device_status",
     "text",
+    "age_label",
+    "freshness_badge",
     "status_badge",
+    "availability_badge",
     "render_device_row",
+    "render_device_detail_row",
+    "render_device_rows",
     "build_dashboard_html",
     "make_handler",
     "DashboardRequestHandler",

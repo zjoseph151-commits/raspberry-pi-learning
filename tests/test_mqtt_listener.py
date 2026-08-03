@@ -28,9 +28,11 @@ mqtt_listener = load_migrated_listener()
 CSV_PATH = mqtt_listener.CSV_PATH
 JSONL_PATH = mqtt_listener.JSONL_PATH
 append_log_line = mqtt_listener.append_log_line
+availability_payload_object = mqtt_listener.availability_payload_object
 decode_payload = mqtt_listener.decode_payload
 format_log_line = mqtt_listener.format_log_line
 handle_message = mqtt_listener.handle_message
+parse_device_topic = mqtt_listener.parse_device_topic
 parse_json_payload = mqtt_listener.parse_json_payload
 
 
@@ -73,6 +75,32 @@ class MqttListenerTests(unittest.TestCase):
 
     def test_parse_json_payload_returns_none_for_invalid_json(self):
         self.assertIsNone(parse_json_payload("not json"))
+
+    def test_parse_device_topic_handles_onboarding_topic_shape(self):
+        self.assertEqual(
+            parse_device_topic("home/devices/esp32-c3-climate-01/telemetry"),
+            ("esp32-c3-climate-01", "telemetry"),
+        )
+        self.assertIsNone(parse_device_topic("home/legacy/status"))
+
+    def test_availability_payload_object_structures_retained_plain_text(self):
+        self.assertEqual(
+            availability_payload_object(
+                "home/devices/esp32-c3-climate-01/availability",
+                "offline",
+            ),
+            {
+                "device": "esp32-c3-climate-01",
+                "type": "availability",
+                "availability": "offline",
+            },
+        )
+        self.assertIsNone(
+            availability_payload_object(
+                "home/devices/esp32-c3-climate-01/telemetry",
+                "offline",
+            )
+        )
 
     def test_format_log_line_includes_structured_fields_for_valid_json(self):
         timestamp = datetime(2026, 7, 3, 12, 34, 56, tzinfo=timezone.utc)
@@ -251,6 +279,42 @@ class MqttListenerTests(unittest.TestCase):
             self.assertEqual(output.getvalue(), expected)
             self.assertEqual(log_path.read_text(encoding="utf-8"), expected)
             self.assertFalse(jsonl_path.exists())
+            self.assertFalse(csv_path.exists())
+
+    def test_handle_message_writes_availability_to_jsonl_but_not_csv(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "data" / "logs" / "mqtt_messages.log"
+            jsonl_path = Path(temp_dir) / JSONL_PATH
+            csv_path = Path(temp_dir) / CSV_PATH
+            timestamp = datetime(2026, 8, 3, 12, 34, 56, tzinfo=timezone.utc)
+            message = FakeMessage(
+                "home/devices/esp32-c3-climate-01/availability",
+                b"offline",
+            )
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    message,
+                    log_path,
+                    lambda: timestamp,
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            jsonl_records = jsonl_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(jsonl_records), 1)
+            self.assertEqual(
+                json.loads(jsonl_records[0]),
+                {
+                    "received_at": "2026-08-03T12:34:56+00:00",
+                    "topic": "home/devices/esp32-c3-climate-01/availability",
+                    "payload": {
+                        "device": "esp32-c3-climate-01",
+                        "type": "availability",
+                        "availability": "offline",
+                    },
+                },
+            )
             self.assertFalse(csv_path.exists())
 
 

@@ -12,6 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.platform import (
+    DEVICE_AVAILABILITY_VALUES,
+    DEVICE_TOPIC_ROOT,
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
     MQTT_CSV_COLUMNS,
@@ -28,6 +30,8 @@ LOG_PATH = MQTT_LOG_PATH
 JSONL_PATH = MQTT_JSONL_PATH
 CSV_PATH = MQTT_CSV_PATH
 CSV_COLUMNS = MQTT_CSV_COLUMNS
+DEVICE_TOPIC_ROOT_PARTS = DEVICE_TOPIC_ROOT.split("/")
+AVAILABILITY_VALUES = {value.lower() for value in DEVICE_AVAILABILITY_VALUES}
 
 
 def current_timestamp() -> datetime:
@@ -53,6 +57,45 @@ def parse_json_payload(payload_text: str) -> Any | None:
 def compact_json(value: Any) -> str:
     """Render JSON without extra whitespace for logs and terminal output."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def parse_device_topic(topic: str) -> tuple[str, str] | None:
+    """Return device ID and message type for the preferred device topic shape."""
+    parts = topic.split("/")
+    expected_length = len(DEVICE_TOPIC_ROOT_PARTS) + 2
+
+    if len(parts) != expected_length:
+        return None
+
+    if parts[: len(DEVICE_TOPIC_ROOT_PARTS)] != DEVICE_TOPIC_ROOT_PARTS:
+        return None
+
+    device_id = parts[-2].strip()
+    message_type = parts[-1].strip()
+
+    if not device_id or not message_type:
+        return None
+
+    return device_id, message_type
+
+
+def availability_payload_object(topic: str, payload_text: str) -> dict[str, str] | None:
+    """Build a structured payload for retained plain-text availability messages."""
+    parsed_topic = parse_device_topic(topic)
+    state = payload_text.strip().lower()
+
+    if parsed_topic is None or state not in AVAILABILITY_VALUES:
+        return None
+
+    device_id, message_type = parsed_topic
+    if message_type != "availability":
+        return None
+
+    return {
+        "device": device_id,
+        "type": "availability",
+        "availability": state,
+    }
 
 
 def format_log_line(timestamp: datetime, topic: str, payload: bytes | str) -> str:
@@ -150,6 +193,14 @@ def handle_message(
         append_csv_row(
             csv_path,
             format_csv_row(received_at, message.topic, parsed_payload),
+        )
+        return
+
+    availability_payload = availability_payload_object(message.topic, payload_text)
+    if availability_payload is not None:
+        append_jsonl_record(
+            jsonl_path,
+            format_jsonl_record(received_at, message.topic, availability_payload),
         )
 
 

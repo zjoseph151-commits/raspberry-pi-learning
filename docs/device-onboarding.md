@@ -24,11 +24,12 @@ For every received MQTT message:
 - A human-readable line is printed and appended to `data/logs/mqtt_messages.log`.
 - If the payload is valid JSON, the full payload is appended to `data/logs/mqtt_messages.jsonl`.
 - If the payload is valid JSON, one fixed-column CSV row is appended to `data/logs/mqtt_messages.csv`.
-- If the payload is not valid JSON, it is kept in the text log only.
+- If the payload is retained plain-text `online` or `offline` on `home/devices/<device-id>/availability`, it is also normalized into `data/logs/mqtt_messages.jsonl` as a structured availability event.
+- Other non-JSON payloads are kept in the text log only.
 
-The health monitor reads `data/logs/mqtt_messages.csv`, groups rows by the JSON `device` field, and writes `data/status/device_status.json`.
+The health monitor reads `data/logs/mqtt_messages.csv`, groups rows by the JSON `device` field, enriches those rows with latest status/telemetry/availability details from JSONL and availability logs, and writes `data/status/device_status.json`.
 
-The dashboard reads `data/status/device_status.json` and displays the fixed health/status columns only.
+The dashboard reads `data/status/device_status.json`, displays the fixed health/status summary columns, and provides expandable device details for latest status, telemetry, and availability fields.
 
 ## Device ID Rules
 
@@ -71,7 +72,7 @@ Recommended message types:
 | `commands` | `home/devices/<device-id>/commands` | JSON object | Commands sent to the device. |
 | `responses` | `home/devices/<device-id>/responses` | JSON object | Command acknowledgements or errors from the device. |
 
-The current listener does not parse device IDs from the topic path. It relies on the JSON `device` field for health grouping.
+The current listener parses this topic shape for retained availability events. Health grouping still relies on the JSON `device` field from status and telemetry payloads.
 
 ## JSON Payload Contract
 
@@ -95,7 +96,7 @@ Currently recognized health/dashboard fields:
 
 Missing fields are handled gracefully and written as blank values in CSV/dashboard output.
 
-Additional fields are allowed. They are preserved in `data/logs/mqtt_messages.jsonl`, but they are not displayed by the current dashboard unless they are one of the fixed health fields above.
+Additional fields are allowed. They are preserved in `data/logs/mqtt_messages.jsonl` and shown in expandable dashboard details for latest status and telemetry payloads.
 
 ## Status Messages
 
@@ -113,7 +114,7 @@ Example:
 {"device":"garage-temp-01","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-For the current health monitor, a device is `ONLINE` when its latest valid CSV-backed JSON message was received within 30 seconds. To stay visibly online, a device should publish a valid JSON status or telemetry message at least every 30 seconds. A 10-15 second interval is a good current default.
+For the current health monitor, heartbeat freshness is `ONLINE` when a device's latest valid CSV-backed JSON message was received within 30 seconds. The dashboard renders that as `FRESH`; otherwise it renders as `STALE`. To stay fresh, a device should publish a valid JSON status or telemetry message at least every 30 seconds. A 10-15 second interval is a good current default for always-online devices.
 
 ## Telemetry Messages
 
@@ -137,7 +138,7 @@ Generic sensor example:
 {"device":"water-softener-01","type":"telemetry","water_level_percent":82,"sensor_ok":true,"uptime_ms":123456}
 ```
 
-If a sensor read fails, prefer a clear boolean such as `sensor_ok:false` and avoid publishing invalid numeric values. The current platform will preserve these details in JSONL; richer dashboard display is a future stage.
+If a sensor read fails, prefer a clear boolean such as `sensor_ok:false` and avoid publishing invalid numeric values. The current platform preserves these details in JSONL and shows them in expandable dashboard details.
 
 ## Availability Messages
 
@@ -156,7 +157,7 @@ offline
 
 Availability messages should be retained. Devices that support MQTT Last Will should configure the broker to publish retained `offline` to the availability topic if the device disconnects unexpectedly, then publish retained `online` after MQTT reconnects.
 
-Important current limitation: plain-text availability messages are logged to `data/logs/mqtt_messages.log`, but they are not written to JSONL/CSV and do not currently drive dashboard `ONLINE` or `OFFLINE` state. Dashboard health is based on recent valid JSON rows in `data/logs/mqtt_messages.csv`.
+Plain-text availability messages are shown separately from heartbeat freshness. They are logged to `data/logs/mqtt_messages.log`, normalized into JSONL for dashboard details, and intentionally kept out of CSV so retained `offline` does not make a sleepy device look like it stopped sending data for the wrong reason.
 
 ## Commands and Responses
 

@@ -112,13 +112,87 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("Generated at: 2026-07-05T12:00:00+00:00", html)
         self.assertIn("esp32-s3-test", html)
         self.assertIn("garage-sensor", html)
-        self.assertIn('class="status online">ONLINE</span>', html)
-        self.assertIn('class="status offline">OFFLINE</span>', html)
-        self.assertIn("<td>home/esp32-s3/status</td>", html)
+        self.assertIn('class="badge fresh">FRESH</span>', html)
+        self.assertIn('class="badge stale">STALE</span>', html)
+        self.assertIn('class="badge availability-unknown">UNKNOWN</span>', html)
+        self.assertIn("<td>15s</td>", html)
+        self.assertIn("<td>2m 0s</td>", html)
+        self.assertIn('<td class="topic">home/esp32-s3/status</td>', html)
         self.assertIn("<td>heartbeat</td>", html)
         self.assertIn("<td>2</td>", html)
         self.assertIn("<td>10000</td>", html)
         self.assertIn("<td>-57</td>", html)
+        self.assertIn("Device Details", html)
+
+    def test_build_dashboard_html_renders_climate_device_details(self):
+        status = {
+            "generated_at": "2026-08-03T12:01:00+00:00",
+            "devices": [
+                {
+                    "device": "esp32-c3-climate-01",
+                    "status": "OFFLINE",
+                    "received_at": "2026-08-03T12:00:00+00:00",
+                    "topic": "home/devices/esp32-c3-climate-01/telemetry",
+                    "type": "telemetry",
+                    "count": "2",
+                    "uptime_ms": "120000",
+                    "wifi_rssi": "-55",
+                    "availability": {
+                        "state": "offline",
+                        "received_at": "2026-08-03T12:00:01+00:00",
+                        "topic": "home/devices/esp32-c3-climate-01/availability",
+                        "fields": {
+                            "device": "esp32-c3-climate-01",
+                            "type": "availability",
+                            "availability": "offline",
+                        },
+                    },
+                    "latest_status": {
+                        "received_at": "2026-08-03T12:00:00+00:00",
+                        "topic": "home/devices/esp32-c3-climate-01/status",
+                        "fields": {
+                            "device": "esp32-c3-climate-01",
+                            "type": "status",
+                            "firmware_version": "0.4.0",
+                            "sleepy": True,
+                            "display_on": False,
+                            "read_interval_ms": 60000,
+                        },
+                    },
+                    "latest_telemetry": {
+                        "received_at": "2026-08-03T12:00:00+00:00",
+                        "topic": "home/devices/esp32-c3-climate-01/telemetry",
+                        "fields": {
+                            "device": "esp32-c3-climate-01",
+                            "type": "telemetry",
+                            "temperature_c": 22.0,
+                            "temperature_f": 71.6,
+                            "humidity_percent": 45.0,
+                            "sensor_ok": True,
+                            "source": "timer",
+                        },
+                    },
+                }
+            ],
+        }
+
+        html = build_dashboard_html(status)
+
+        self.assertIn('class="badge stale">STALE</span>', html)
+        self.assertIn('class="badge availability-offline">OFFLINE</span>', html)
+        self.assertIn("<td>1m 0s</td>", html)
+        self.assertIn("Latest Telemetry", html)
+        self.assertIn("temperature_f", html)
+        self.assertIn("71.6", html)
+        self.assertIn("humidity_percent", html)
+        self.assertIn("sensor_ok", html)
+        self.assertIn(">true</dd>", html)
+        self.assertIn("Latest Status", html)
+        self.assertIn("firmware_version", html)
+        self.assertIn("0.4.0", html)
+        self.assertIn("display_on", html)
+        self.assertIn(">false</dd>", html)
+        self.assertIn("Availability Event", html)
 
     def test_build_dashboard_html_escapes_device_data(self):
         status = {

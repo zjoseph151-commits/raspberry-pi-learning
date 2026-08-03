@@ -47,10 +47,10 @@ This checklist tracks future work for turning the Raspberry Pi IoT learning proj
 
 ## Dashboard
 
-- [ ] Add device detail pages or expandable rows.
-- [ ] Display selected telemetry fields beyond the fixed health columns.
-- [ ] Add timestamps and stale-data indicators that are easy to understand.
-- [ ] Show availability state separately from heartbeat freshness.
+- [x] Add device detail pages or expandable rows.
+- [x] Display selected telemetry fields beyond the fixed health columns.
+- [x] Add timestamps and stale-data indicators that are easy to understand.
+- [x] Show availability state separately from heartbeat freshness.
 - [ ] Add simple charts after the storage model is stable.
 - [ ] Keep the dashboard usable on the Raspberry Pi at `http://localhost:8080`.
 

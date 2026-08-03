@@ -116,11 +116,11 @@ uptime_ms
 wifi_rssi
 ```
 
-Plain-text retained availability messages are logged, but they do not currently drive dashboard `ONLINE` or `OFFLINE` state.
+Plain-text retained availability messages are logged, normalized for dashboard details, and shown separately from heartbeat freshness. They do not drive the CSV-backed `ONLINE` or `OFFLINE` heartbeat status.
 
 ## Known Important Caveats
 
-- The platform currently has no SQLite database, device registry, MQTT authentication, schema validation, or per-device dashboard views.
+- The platform currently has no SQLite database, device registry, MQTT authentication, schema validation, or dedicated per-device dashboard pages.
 - The health monitor groups by JSON `device`, not by parsing the MQTT topic path.
 - Any valid JSON message with a `device` field can become the latest health row for that device.
 - ESP32 firmware version references are currently aligned to `0.2.1`; when changing firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
@@ -187,8 +187,8 @@ Reference platform context:
 - Valid JSON payloads should include a stable device field.
 - Current health/dashboard fields are:
   device, type, count, uptime_ms, wifi_rssi
-- Extra telemetry fields are allowed and preserved in JSONL, but the current dashboard does not display them yet.
-- Plain-text retained availability messages are logged, but they do not currently drive dashboard ONLINE/OFFLINE state.
+- Extra telemetry fields are allowed, preserved in JSONL, and shown in expandable dashboard details.
+- Plain-text retained availability messages are logged and shown separately from heartbeat freshness; they do not drive dashboard FRESH/STALE state.
 
 Your task:
 1. Inspect the current source project read-only.

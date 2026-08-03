@@ -96,7 +96,7 @@ home/devices/<device-id>/<message-type>
 
 The listener still subscribes to `home/#`, and health grouping still depends on the JSON `device` field rather than parsing the topic path.
 
-The current dashboard is still a generic health table. Device-specific telemetry fields are preserved in JSONL but are not displayed unless they match the fixed CSV/report columns.
+The current dashboard is still generic, but it now has expandable rows. The summary table keeps the fixed CSV/report fields, while detail panels show latest status, telemetry, and retained availability fields from JSONL and availability logs. Heartbeat freshness is displayed separately from retained availability.
 
 ## Data Flow
 

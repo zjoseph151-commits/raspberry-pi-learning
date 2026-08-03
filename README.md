@@ -334,6 +334,8 @@ received_at,topic,device,type,count,uptime_ms,wifi_rssi
 
 Missing JSON fields are written as blank CSV values. Raw non-JSON messages, such as retained availability payloads, are still written to the plain text log without crashing the listener.
 
+Retained plain-text availability payloads under `home/devices/<device-id>/availability` are also normalized into `data/logs/mqtt_messages.jsonl` as structured availability events. They are intentionally not written to CSV, so availability does not override heartbeat freshness.
+
 Manual run from the repository root:
 
 ```bash
@@ -355,13 +357,15 @@ The health monitor reads:
 data/logs/mqtt_messages.csv
 ```
 
+It also uses `data/logs/mqtt_messages.jsonl` and retained availability entries from `data/logs/mqtt_messages.log` to enrich the dashboard with latest status, telemetry, and availability details.
+
 It writes the latest device status snapshot to:
 
 ```text
 data/status/device_status.json
 ```
 
-The monitor keeps the latest message per `device` and marks a device `ONLINE` when its latest message was received within 30 seconds. Otherwise, the device is `OFFLINE`.
+The monitor keeps the latest CSV-backed message per `device` and marks heartbeat freshness as `ONLINE` when the latest message was received within 30 seconds. Otherwise, heartbeat freshness is `OFFLINE`. Availability is tracked separately from heartbeat freshness.
 
 Manual run from the repository root:
 
@@ -411,7 +415,7 @@ Open the dashboard on the Raspberry Pi at:
 http://localhost:8080
 ```
 
-From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows `ONLINE` and `OFFLINE` labels for each device.
+From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds, shows heartbeat freshness as `FRESH` or `STALE`, shows retained availability separately as `ONLINE`, `OFFLINE`, or `UNKNOWN`, and includes expandable device details for latest status, telemetry, and availability fields.
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
@@ -439,7 +443,7 @@ The current CSV health view also understands these optional fields:
 {"device":"example-device","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-Messages with other JSON fields are still preserved fully in `data/logs/mqtt_messages.jsonl`, but the current dashboard only displays the fixed health/status columns. Plain-text availability messages are logged but do not currently drive dashboard `ONLINE` or `OFFLINE` state.
+Messages with other JSON fields are preserved fully in `data/logs/mqtt_messages.jsonl` and shown in expandable dashboard details for latest status and telemetry. Plain-text retained availability messages are logged and shown as separate availability state; they do not drive heartbeat freshness.
 
 See `docs/device-onboarding.md` for the full topic contract, payload examples, command/response notes, verification steps, and current limitations.
 

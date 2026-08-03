@@ -85,6 +85,6 @@ New MQTT devices can be added now if they publish valid JSON under `home/#` and 
 {"device":"example-device","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-The current platform will log the message, include valid JSON in JSONL, write fixed CSV fields, and show the device in the health dashboard after the health monitor runs.
+The current platform will log the message, include valid JSON in JSONL, write fixed CSV fields, and show the device in the health dashboard after the health monitor runs. Extra status and telemetry fields appear in expandable dashboard details.
 
-For the complete onboarding contract, see `docs/device-onboarding.md`. Rich device-specific dashboards, per-device display rules, and a registry remain future platform stages.
+For the complete onboarding contract, see `docs/device-onboarding.md`. Rich charts, dedicated per-device pages, per-device display rules, and a registry remain future platform stages.

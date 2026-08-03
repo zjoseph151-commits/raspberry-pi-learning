@@ -29,7 +29,13 @@ _target = _load_target()
 device_status = _target.device_status
 STATUS_JSON_PATH = _target.STATUS_JSON_PATH
 CSV_PATH = _target.CSV_PATH
+JSONL_PATH = _target.JSONL_PATH
+LOG_PATH = _target.LOG_PATH
 
+read_jsonl_records = _target.read_jsonl_records
+read_availability_log_records = _target.read_availability_log_records
+latest_detail_records = _target.latest_detail_records
+merge_device_details = _target.merge_device_details
 build_status_report = _target.build_status_report
 write_status_report = _target.write_status_report
 print_status_report = _target.print_status_report
@@ -41,6 +47,12 @@ __all__ = [
     "device_status",
     "STATUS_JSON_PATH",
     "CSV_PATH",
+    "JSONL_PATH",
+    "LOG_PATH",
+    "read_jsonl_records",
+    "read_availability_log_records",
+    "latest_detail_records",
+    "merge_device_details",
     "build_status_report",
     "write_status_report",
     "print_status_report",

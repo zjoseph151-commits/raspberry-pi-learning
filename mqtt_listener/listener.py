@@ -38,6 +38,8 @@ current_timestamp = _target.current_timestamp
 decode_payload = _target.decode_payload
 parse_json_payload = _target.parse_json_payload
 compact_json = _target.compact_json
+parse_device_topic = _target.parse_device_topic
+availability_payload_object = _target.availability_payload_object
 format_log_line = _target.format_log_line
 format_jsonl_record = _target.format_jsonl_record
 format_csv_row = _target.format_csv_row
@@ -61,6 +63,8 @@ __all__ = [
     "decode_payload",
     "parse_json_payload",
     "compact_json",
+    "parse_device_topic",
+    "availability_payload_object",
     "format_log_line",
     "format_jsonl_record",
     "format_csv_row",

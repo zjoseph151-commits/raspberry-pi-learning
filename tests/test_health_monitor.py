@@ -32,6 +32,7 @@ health_monitor = load_migrated_health_monitor()
 
 CSV_COLUMNS = health_monitor.device_status.CSV_COLUMNS
 build_status_report = health_monitor.build_status_report
+parse_availability_log_line = health_monitor.parse_availability_log_line
 run = health_monitor.run
 write_status_report = health_monitor.write_status_report
 
@@ -53,6 +54,14 @@ class HealthMonitorTests(unittest.TestCase):
         self.assertEqual(
             health_monitor.STATUS_JSON_PATH,
             Path("data/status/device_status.json"),
+        )
+        self.assertEqual(
+            health_monitor.JSONL_PATH,
+            Path("data/logs/mqtt_messages.jsonl"),
+        )
+        self.assertEqual(
+            health_monitor.LOG_PATH,
+            Path("data/logs/mqtt_messages.log"),
         )
         self.assertEqual(
             Path(health_monitor.device_status.__file__).resolve(),
@@ -124,6 +133,98 @@ class HealthMonitorTests(unittest.TestCase):
                 ],
             },
         )
+
+    def test_parse_availability_log_line_structures_legacy_text_log(self):
+        record = parse_availability_log_line(
+            "2026-08-03T12:00:01+00:00 | "
+            "topic=home/devices/esp32-c3-climate-01/availability | "
+            "payload=offline\n"
+        )
+
+        self.assertEqual(
+            record,
+            {
+                "received_at": "2026-08-03T12:00:01+00:00",
+                "topic": "home/devices/esp32-c3-climate-01/availability",
+                "payload": {
+                    "device": "esp32-c3-climate-01",
+                    "type": "availability",
+                    "availability": "offline",
+                },
+            },
+        )
+
+    def test_build_status_report_enriches_dashboard_details(self):
+        now = datetime(2026, 8, 3, 12, 1, 0, tzinfo=timezone.utc)
+        rows = [
+            {
+                "received_at": "2026-08-03T12:00:45+00:00",
+                "topic": "home/devices/esp32-c3-climate-01/telemetry",
+                "device": "esp32-c3-climate-01",
+                "type": "telemetry",
+                "count": "2",
+                "uptime_ms": "120000",
+                "wifi_rssi": "-55",
+            },
+        ]
+        detail_records = [
+            {
+                "received_at": "2026-08-03T12:00:40+00:00",
+                "topic": "home/devices/esp32-c3-climate-01/status",
+                "payload": {
+                    "device": "esp32-c3-climate-01",
+                    "type": "status",
+                    "count": 2,
+                    "firmware_version": "0.4.0",
+                    "sleepy": True,
+                    "read_interval_ms": 60000,
+                },
+            },
+            {
+                "received_at": "2026-08-03T12:00:45+00:00",
+                "topic": "home/devices/esp32-c3-climate-01/telemetry",
+                "payload": {
+                    "device": "esp32-c3-climate-01",
+                    "type": "telemetry",
+                    "count": 2,
+                    "temperature_f": 71.6,
+                    "humidity_percent": 45.0,
+                    "sensor_ok": True,
+                    "source": "timer",
+                },
+            },
+            {
+                "received_at": "2026-08-03T12:00:50+00:00",
+                "topic": "home/devices/esp32-c3-climate-01/availability",
+                "payload": {
+                    "device": "esp32-c3-climate-01",
+                    "type": "availability",
+                    "availability": "offline",
+                },
+            },
+        ]
+
+        report = build_status_report(
+            rows,
+            now,
+            Path("data/logs/mqtt_messages.csv"),
+            detail_records=detail_records,
+        )
+        device = report["devices"][0]
+
+        self.assertEqual(device["device"], "esp32-c3-climate-01")
+        self.assertEqual(device["status"], "ONLINE")
+        self.assertEqual(device["availability"]["state"], "offline")
+        self.assertEqual(
+            device["latest_status"]["fields"]["firmware_version"],
+            "0.4.0",
+        )
+        self.assertTrue(device["latest_status"]["fields"]["sleepy"])
+        self.assertEqual(
+            device["latest_telemetry"]["fields"]["temperature_f"],
+            71.6,
+        )
+        self.assertTrue(device["latest_telemetry"]["fields"]["sensor_ok"])
 
     def test_write_status_report_creates_parent_folder(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -56,21 +57,147 @@ def text(value: Any) -> str:
     return escape(str(value if value is not None else ""))
 
 
-def status_badge(status: Any) -> str:
-    """Render a clear ONLINE/OFFLINE status label."""
+def parse_timestamp(value: Any) -> datetime | None:
+    """Parse ISO timestamps from health reports."""
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def age_seconds(generated_at: Any, received_at: Any) -> int | None:
+    """Return age at report generation time."""
+    generated = parse_timestamp(generated_at)
+    received = parse_timestamp(received_at)
+
+    if generated is None or received is None:
+        return None
+
+    return max(0, int((generated - received).total_seconds()))
+
+
+def age_label(generated_at: Any, received_at: Any) -> str:
+    """Render a compact age label for latest device data."""
+    seconds = age_seconds(generated_at, received_at)
+
+    if seconds is None:
+        return ""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        minutes, remaining_seconds = divmod(seconds, 60)
+        return f"{minutes}m {remaining_seconds}s"
+
+    hours, remaining_seconds = divmod(seconds, 3600)
+    minutes = remaining_seconds // 60
+    return f"{hours}h {minutes}m"
+
+
+def display_value(value: Any) -> str:
+    """Render MQTT field values consistently for compact details."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value if value is not None else "")
+
+
+def freshness_badge(status: Any) -> str:
+    """Render heartbeat freshness separately from MQTT availability."""
     normalized = str(status or "UNKNOWN").upper()
-    css_class = "online" if normalized == "ONLINE" else "offline"
-    return f'<span class="status {css_class}">{text(normalized)}</span>'
+    if normalized == "ONLINE":
+        label = "FRESH"
+        css_class = "fresh"
+    elif normalized == "OFFLINE":
+        label = "STALE"
+        css_class = "stale"
+    else:
+        label = "UNKNOWN"
+        css_class = "unknown"
+
+    return f'<span class="badge {css_class}">{text(label)}</span>'
 
 
-def render_device_row(device: dict[str, Any]) -> str:
+def status_badge(status: Any) -> str:
+    """Compatibility wrapper for the previous dashboard helper name."""
+    return freshness_badge(status)
+
+
+def availability_state(device: dict[str, Any]) -> str:
+    """Return the latest retained availability state for a device."""
+    availability = device.get("availability")
+    if not isinstance(availability, dict):
+        return "UNKNOWN"
+
+    state = availability.get("state")
+    fields = availability.get("fields")
+    if state is None and isinstance(fields, dict):
+        state = fields.get("availability")
+
+    normalized = str(state or "UNKNOWN").upper()
+    return normalized if normalized in {"ONLINE", "OFFLINE"} else "UNKNOWN"
+
+
+def availability_badge(device: dict[str, Any]) -> str:
+    """Render retained MQTT availability as its own device state."""
+    state = availability_state(device)
+    css_class = f"availability-{state.lower()}"
+    return f'<span class="badge {css_class}">{text(state)}</span>'
+
+
+def render_field_list(fields: Any) -> str:
+    """Render latest MQTT payload fields as a compact definition list."""
+    if not isinstance(fields, dict):
+        return '<p class="muted">No fields available.</p>'
+
+    items = []
+    for key, value in fields.items():
+        if key == "device":
+            continue
+
+        items.append(
+            f"<dt>{text(key)}</dt>"
+            f"<dd>{text(display_value(value))}</dd>"
+        )
+
+    if not items:
+        return '<p class="muted">No fields available.</p>'
+
+    return f"<dl>{''.join(items)}</dl>"
+
+
+def render_event_panel(title: str, event: Any) -> str:
+    """Render one latest status, telemetry, or availability event."""
+    if not isinstance(event, dict):
+        return ""
+
+    fields = event.get("fields", {})
+    received_at = text(event.get("received_at", ""))
+    topic = text(event.get("topic", ""))
+
+    return (
+        '<section class="detail-panel">'
+        f"<h2>{text(title)}</h2>"
+        f'<p class="detail-meta">{received_at}</p>'
+        f'<p class="detail-topic">{topic}</p>'
+        f"{render_field_list(fields)}"
+        "</section>"
+    )
+
+
+def render_device_row(device: dict[str, Any], generated_at: Any = "") -> str:
     """Render one device row from the health monitor JSON shape."""
     return (
         "<tr>"
         f"<td>{text(device.get('device', ''))}</td>"
-        f"<td>{status_badge(device.get('status', 'UNKNOWN'))}</td>"
+        f"<td>{freshness_badge(device.get('status', 'UNKNOWN'))}</td>"
+        f"<td>{availability_badge(device)}</td>"
         f"<td>{text(device.get('received_at', ''))}</td>"
-        f"<td>{text(device.get('topic', ''))}</td>"
+        f"<td>{text(age_label(generated_at, device.get('received_at', '')))}</td>"
+        f'<td class="topic">{text(device.get("topic", ""))}</td>'
         f"<td>{text(device.get('type', ''))}</td>"
         f"<td>{text(device.get('count', ''))}</td>"
         f"<td>{text(device.get('uptime_ms', ''))}</td>"
@@ -79,22 +206,55 @@ def render_device_row(device: dict[str, Any]) -> str:
     )
 
 
+def render_device_detail_row(device: dict[str, Any]) -> str:
+    """Render the expandable per-device detail row."""
+    panels = [
+        render_event_panel("Latest Telemetry", device.get("latest_telemetry")),
+        render_event_panel("Latest Status", device.get("latest_status")),
+        render_event_panel("Availability Event", device.get("availability")),
+    ]
+    panels_html = "".join(panel for panel in panels if panel)
+
+    if not panels_html:
+        panels_html = '<p class="muted">No expanded device data available.</p>'
+
+    return (
+        '<tr class="details-row">'
+        '<td colspan="10">'
+        "<details>"
+        "<summary>Device Details</summary>"
+        f'<div class="details-grid">{panels_html}</div>'
+        "</details>"
+        "</td>"
+        "</tr>"
+    )
+
+
+def render_device_rows(device: dict[str, Any], generated_at: Any = "") -> str:
+    """Render the main row and its expandable detail row."""
+    return (
+        f"{render_device_row(device, generated_at)}\n"
+        f"{render_device_detail_row(device)}"
+    )
+
+
 def build_dashboard_html(status_report: dict[str, Any]) -> str:
     """Build a simple auto-refreshing dashboard page."""
-    generated_at = text(status_report.get("generated_at", ""))
+    generated_at_value = status_report.get("generated_at", "")
+    generated_at = text(generated_at_value)
     message = status_report.get("message", "")
     devices = status_report.get("devices", [])
     device_rows = ""
 
     if isinstance(devices, list) and devices:
         device_rows = "\n".join(
-            render_device_row(device)
+            render_device_rows(device, generated_at_value)
             for device in devices
             if isinstance(device, dict)
         )
     else:
         device_rows = (
-            '<tr><td colspan="8" class="empty">No device status data available.</td></tr>'
+            '<tr><td colspan="10" class="empty">No device status data available.</td></tr>'
         )
 
     message_html = f'<p class="message">{text(message)}</p>' if message else ""
@@ -126,11 +286,12 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       border: 1px solid #d1d5db;
       padding: 0.65rem;
       text-align: left;
+      vertical-align: top;
     }}
     th {{
       background: #e5e7eb;
     }}
-    .status {{
+    .badge {{
       display: inline-block;
       min-width: 4.75rem;
       padding: 0.2rem 0.5rem;
@@ -138,15 +299,66 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       font-weight: bold;
       text-align: center;
     }}
-    .online {{
+    .fresh, .availability-online {{
       color: #065f46;
       background: #d1fae5;
     }}
-    .offline {{
+    .stale, .availability-offline {{
       color: #991b1b;
       background: #fee2e2;
     }}
-    .message, .empty {{
+    .unknown, .availability-unknown {{
+      color: #374151;
+      background: #e5e7eb;
+    }}
+    .topic, .detail-topic {{
+      overflow-wrap: anywhere;
+    }}
+    details {{
+      margin: 0;
+    }}
+    summary {{
+      cursor: pointer;
+      font-weight: bold;
+    }}
+    .details-row td {{
+      background: #f9fafb;
+    }}
+    .details-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: 1rem;
+      margin-top: 0.75rem;
+    }}
+    .detail-panel {{
+      border: 1px solid #d1d5db;
+      border-radius: 0.25rem;
+      padding: 0.75rem;
+      background: #ffffff;
+    }}
+    .detail-panel h2 {{
+      margin: 0 0 0.4rem;
+      font-size: 1rem;
+    }}
+    .detail-meta, .detail-topic {{
+      margin: 0.2rem 0;
+      color: #4b5563;
+      font-size: 0.9rem;
+    }}
+    dl {{
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.35rem 0.75rem;
+      margin: 0.75rem 0 0;
+    }}
+    dt {{
+      color: #4b5563;
+      font-weight: bold;
+    }}
+    dd {{
+      margin: 0;
+    }}
+    .message, .empty, .muted {{
       color: #6b7280;
     }}
   </style>
@@ -159,8 +371,10 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     <thead>
       <tr>
         <th>Device</th>
-        <th>Status</th>
+        <th>Heartbeat</th>
+        <th>Availability</th>
         <th>Latest received_at</th>
+        <th>Age</th>
         <th>Topic</th>
         <th>Message type</th>
         <th>Heartbeat count</th>

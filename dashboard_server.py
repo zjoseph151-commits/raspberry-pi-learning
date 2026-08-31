@@ -32,6 +32,7 @@ PORT = _target.PORT
 
 load_device_status = _target.load_device_status
 text = _target.text
+detail_key = _target.detail_key
 age_label = _target.age_label
 freshness_badge = _target.freshness_badge
 status_badge = _target.status_badge
@@ -52,6 +53,7 @@ __all__ = [
     "PORT",
     "load_device_status",
     "text",
+    "detail_key",
     "age_label",
     "freshness_badge",
     "status_badge",

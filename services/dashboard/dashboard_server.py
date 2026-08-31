@@ -57,6 +57,15 @@ def text(value: Any) -> str:
     return escape(str(value if value is not None else ""))
 
 
+def detail_key(device: dict[str, Any]) -> str:
+    """Return a stable key for preserving each device detail row state."""
+    key = str(device.get("device") or "").strip()
+    if key:
+        return key
+
+    return str(device.get("topic") or "unknown-device").strip()
+
+
 def parse_timestamp(value: Any) -> datetime | None:
     """Parse ISO timestamps from health reports."""
     if not value:
@@ -221,7 +230,7 @@ def render_device_detail_row(device: dict[str, Any]) -> str:
     return (
         '<tr class="details-row">'
         '<td colspan="10">'
-        "<details>"
+        f'<details data-device-details-key="{text(detail_key(device))}">'
         "<summary>Device Details</summary>"
         f'<div class="details-grid">{panels_html}</div>'
         "</details>"
@@ -362,6 +371,47 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       color: #6b7280;
     }}
   </style>
+  <script>
+    (function () {{
+      var storageKey = "pi-iot-dashboard-open-details";
+
+      function readOpenKeys() {{
+        try {{
+          return new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+        }} catch (error) {{
+          return new Set();
+        }}
+      }}
+
+      function writeOpenKeys(openKeys) {{
+        try {{
+          localStorage.setItem(storageKey, JSON.stringify(Array.from(openKeys)));
+        }} catch (error) {{
+        }}
+      }}
+
+      document.addEventListener("DOMContentLoaded", function () {{
+        var openKeys = readOpenKeys();
+        var detailRows = document.querySelectorAll("details[data-device-details-key]");
+
+        detailRows.forEach(function (details) {{
+          var key = details.dataset.deviceDetailsKey;
+          if (openKeys.has(key)) {{
+            details.open = true;
+          }}
+
+          details.addEventListener("toggle", function () {{
+            if (details.open) {{
+              openKeys.add(key);
+            }} else {{
+              openKeys.delete(key);
+            }}
+            writeOpenKeys(openKeys);
+          }});
+        }});
+      }});
+    }})();
+  </script>
 </head>
 <body>
   <h1>Pi IoT Dashboard</h1>

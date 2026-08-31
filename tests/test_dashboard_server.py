@@ -123,6 +123,10 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("<td>10000</td>", html)
         self.assertIn("<td>-57</td>", html)
         self.assertIn("Device Details", html)
+        self.assertIn('data-device-details-key="esp32-s3-test"', html)
+        self.assertIn('data-device-details-key="garage-sensor"', html)
+        self.assertIn('storageKey = "pi-iot-dashboard-open-details"', html)
+        self.assertIn("localStorage.setItem(storageKey", html)
 
     def test_build_dashboard_html_renders_climate_device_details(self):
         status = {
@@ -193,6 +197,7 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("display_on", html)
         self.assertIn(">false</dd>", html)
         self.assertIn("Availability Event", html)
+        self.assertIn('data-device-details-key="esp32-c3-climate-01"', html)
 
     def test_build_dashboard_html_escapes_device_data(self):
         status = {

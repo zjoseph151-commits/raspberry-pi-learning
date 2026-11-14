@@ -128,6 +128,7 @@ Plain-text retained availability messages are logged and projected into device s
 - Canonical commands and responses are archived but never refresh heartbeat state. Invalid canonical JSON is retained in JSONL with a `validation_error` and excluded from device state.
 - The dashboard can publish the four `birdfeeder-01` commands. Those controls are currently unauthenticated on the LAN; a successful `record_now` reply means recording started, not that clip upload completed.
 - The dashboard also supports the four `front-porch-camera-01` commands (`start_stream`, `stop_stream`, `stream_info`, `status_now`) and its port-80 MJPEG URL. These controls are likewise unauthenticated on the LAN.
+- The dashboard has a read-only Services table for the local Mosquitto, MQTT listener, health-monitor timer/service, and dashboard systemd units. Restart actions are not implemented; add authentication and narrowly scoped privileges first.
 - ESP32 firmware version references are currently aligned to `0.2.1`; when changing firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
 - The default `python -m unittest discover` command does not find tests from the repository root in the current layout; use `python -m unittest discover -s tests -v`.
 

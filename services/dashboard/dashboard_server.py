@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from ipaddress import IPv4Address, AddressValueError
 from threading import Event, Lock
@@ -41,6 +42,102 @@ PORCH_COMMAND_PATH = f"/api/devices/{PORCH_DEVICE_ID}/commands"
 PORCH_COMMANDS = frozenset({"start_stream", "stop_stream", "stream_info", "status_now"})
 PORCH_COMMAND_LOCK = Lock()
 PORCH_SCRIPT_PATH = Path(__file__).with_name("front_porch_controls.js")
+SERVICE_UNITS = (
+    ("MQTT broker", "mosquitto.service", "service"),
+    ("MQTT listener", "mqtt-listener.service", "service"),
+    ("Health monitor timer", "health-monitor.timer", "timer"),
+    ("Health monitor", "health-monitor.service", "oneshot"),
+    ("Dashboard", "iot-dashboard.service", "service"),
+)
+SERVICE_PROPERTIES = (
+    "Id", "LoadState", "ActiveState", "SubState", "Result",
+    "ActiveEnterTimestamp", "StateChangeTimestamp", "ExecMainExitTimestamp",
+    "LastTriggerUSec", "NextElapseUSecRealtime", "NextElapseUSecMonotonic",
+)
+
+
+def load_service_status() -> dict[str, Any]:
+    """Read a fixed set of local systemd units without invoking a shell."""
+    checked_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    command = [
+        "systemctl", "show", "--no-pager",
+        f"--property={','.join(SERVICE_PROPERTIES)}",
+        *(unit for _, unit, _ in SERVICE_UNITS),
+    ]
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, timeout=2, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"checked_at": checked_at, "error": "Service status unavailable", "units": []}
+
+    units: dict[str, dict[str, str]] = {}
+    for section in completed.stdout.strip().split("\n\n"):
+        properties = dict(
+            line.split("=", 1) for line in section.splitlines() if "=" in line
+        )
+        if properties.get("Id"):
+            units[properties["Id"]] = properties
+    if not units:
+        return {"checked_at": checked_at, "error": "Service status unavailable", "units": []}
+
+    rows = []
+    for name, unit, kind in SERVICE_UNITS:
+        properties = units.get(unit, {})
+        load_state = properties.get("LoadState", "")
+        active_state = properties.get("ActiveState", "")
+        result = properties.get("Result", "")
+        if not properties or load_state == "not-found":
+            state, tone = "Not found", "unknown"
+        elif load_state != "loaded":
+            state, tone = load_state.replace("-", " ").capitalize(), "unknown"
+        elif active_state == "failed":
+            state, tone = "Failed", "error"
+        elif kind == "oneshot":
+            if result not in ("", "success"):
+                state, tone = "Failed", "error"
+            elif active_state in ("activating", "active"):
+                state, tone = "Running", "ok"
+            elif properties.get("ExecMainExitTimestamp") not in (None, "", "n/a"):
+                state, tone = "Succeeded", "ok"
+            else:
+                state, tone = "Not run", "unknown"
+        elif active_state == "active":
+            state, tone = "Active", "ok"
+        elif active_state == "activating":
+            state, tone = "Starting", "unknown"
+        else:
+            state, tone = "Inactive", "error"
+
+        if kind == "oneshot":
+            last_activity = properties.get("ExecMainExitTimestamp", "")
+        elif kind == "timer":
+            last_activity = properties.get("LastTriggerUSec", "")
+        else:
+            timestamp = "ActiveEnterTimestamp" if active_state == "active" else "StateChangeTimestamp"
+            last_activity = properties.get(timestamp, "")
+        next_run = ""
+        if kind == "timer":
+            next_run = next(
+                (
+                    value for key in ("NextElapseUSecRealtime", "NextElapseUSecMonotonic")
+                    if (value := properties.get(key, "")) not in ("", "n/a")
+                ),
+                "",
+            )
+        rows.append({
+            "name": name,
+            "unit": unit,
+            "state": state,
+            "tone": tone,
+            "detail": properties.get("SubState", "") if load_state == "loaded" else load_state,
+            "result": result if result else "-",
+            "last_activity": last_activity if last_activity not in ("", "n/a") else "-",
+            "next_run": next_run if next_run not in ("", "n/a") else "-",
+        })
+
+    error = "" if completed.returncode == 0 else "Some service status may be unavailable"
+    return {"checked_at": checked_at, "error": error, "units": rows}
 
 
 def private_stream_url(value: Any, port: int) -> str:
@@ -543,7 +640,46 @@ def render_device_rows(device: dict[str, Any], generated_at: Any = "") -> str:
     )
 
 
-def build_dashboard_html(status_report: dict[str, Any]) -> str:
+def render_service_status(report: dict[str, Any]) -> str:
+    units = report.get("units", [])
+    if not units:
+        return (
+            '<section class="services">'
+            "<h2>Services</h2>"
+            f'<p class="message">{text(report.get("error") or "Service status unavailable")}</p>'
+            "</section>"
+        )
+
+    rows = []
+    for unit in units:
+        tone = unit.get("tone") if unit.get("tone") in {"ok", "error", "unknown"} else "unknown"
+        rows.append(
+            "<tr>"
+            f'<td><strong>{text(unit.get("name", ""))}</strong>'
+            f'<small>{text(unit.get("unit", ""))}</small></td>'
+            f'<td><span class="service-state service-{tone}">{text(unit.get("state", ""))}</span></td>'
+            f'<td>{text(unit.get("detail", ""))}</td>'
+            f'<td>{text(unit.get("result", "-"))}</td>'
+            f'<td>{text(unit.get("last_activity", "-"))}</td>'
+            f'<td>{text(unit.get("next_run", "-"))}</td>'
+            "</tr>"
+        )
+    error_html = f'<p class="message">{text(report["error"])}</p>' if report.get("error") else ""
+    return (
+        '<section class="services">'
+        '<div class="services-heading"><h2>Services</h2>'
+        f'<span>Checked {text(report.get("checked_at", ""))}</span></div>'
+        f"{error_html}"
+        '<div class="table-scroll"><table>'
+        '<thead><tr><th>Service</th><th>State</th><th>Detail</th><th>Last result</th>'
+        '<th>Last activity</th><th>Next run</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table></div></section>'
+    )
+
+
+def build_dashboard_html(
+    status_report: dict[str, Any], service_report: dict[str, Any] | None = None
+) -> str:
     """Build a simple auto-refreshing dashboard page."""
     generated_at_value = status_report.get("generated_at", "")
     generated_at = text(generated_at_value)
@@ -572,6 +708,7 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
         )
 
     message_html = f'<p class="message">{text(message)}</p>' if message else ""
+    services_html = render_service_status(service_report or {})
 
     return f"""<!doctype html>
 <html lang="en">
@@ -598,6 +735,54 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     }}
     .table-scroll {{
       overflow-x: auto;
+    }}
+    .services {{
+      margin: 1.5rem 0 2rem;
+    }}
+    .services-heading {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.75rem;
+    }}
+    .services-heading h2 {{
+      margin: 0;
+      font-size: 1.2rem;
+    }}
+    .devices-heading {{
+      margin: 0 0 0.5rem;
+      font-size: 1.2rem;
+    }}
+    .services-heading span, .services small {{
+      color: #4b5563;
+      font-size: 0.8rem;
+    }}
+    .services table {{
+      min-width: 44rem;
+      margin-top: 0.5rem;
+    }}
+    .services small {{
+      display: block;
+      margin-top: 0.2rem;
+    }}
+    .service-state {{
+      display: inline-block;
+      padding: 0.2rem 0.5rem;
+      border-radius: 0.25rem;
+      font-weight: bold;
+      white-space: nowrap;
+    }}
+    .service-ok {{
+      color: #065f46;
+      background: #d1fae5;
+    }}
+    .service-error {{
+      color: #991b1b;
+      background: #fee2e2;
+    }}
+    .service-unknown {{
+      color: #374151;
+      background: #e5e7eb;
     }}
     th, td {{
       border: 1px solid #d1d5db;
@@ -823,6 +1008,8 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
   <h1>Pi IoT Dashboard</h1>
   <p>Generated at: {generated_at}</p>
   {message_html}
+  {services_html}
+  <h2 class="devices-heading">Devices</h2>
   <div class="table-scroll">
   <table>
     <thead>
@@ -855,6 +1042,7 @@ def make_handler(
     quiet: bool = False,
     command_sender: Callable[[str, int | None], dict[str, Any]] = send_birdfeeder_command,
     porch_command_sender: Callable[[str, int | None], dict[str, Any]] = send_porch_command,
+    service_status_loader: Callable[[], dict[str, Any]] = load_service_status,
 ):
     """Create a request handler bound to a specific status JSON path."""
 
@@ -890,7 +1078,7 @@ def make_handler(
                 self.send_error(404, "Not Found")
                 return
 
-            html = build_dashboard_html(load_device_status(status_path))
+            html = build_dashboard_html(load_device_status(status_path), service_status_loader())
             body = html.encode("utf-8")
 
             self.send_response(200)

@@ -54,6 +54,88 @@ class TitleParser(HTMLParser):
 
 
 class DashboardServerTests(unittest.TestCase):
+    def test_load_service_status_distinguishes_timer_and_oneshot(self):
+        output = "\n\n".join(
+            (
+                "Id=mosquitto.service\nLoadState=loaded\nActiveState=active\nSubState=running\n"
+                "ActiveEnterTimestamp=Sat 2026-11-14 12:00:00 MST",
+                "Id=mqtt-listener.service\nLoadState=loaded\nActiveState=failed\n"
+                "SubState=failed\nResult=exit-code",
+                "Id=health-monitor.timer\nLoadState=loaded\nActiveState=active\n"
+                "SubState=waiting\nLastTriggerUSec=Sat 2026-11-14 12:00:00 MST\n"
+                "NextElapseUSecRealtime=n/a\n"
+                "NextElapseUSecMonotonic=Sat 2026-11-14 12:01:00 MST",
+                "Id=health-monitor.service\nLoadState=loaded\nActiveState=inactive\n"
+                "SubState=dead\nResult=success\n"
+                "ExecMainExitTimestamp=Sat 2026-11-14 12:00:03 MST",
+                "Id=iot-dashboard.service\nLoadState=loaded\nActiveState=active\n"
+                "SubState=running\nActiveEnterTimestamp=Sat 2026-11-14 11:00:00 MST",
+            )
+        )
+        with patch.object(
+            dashboard_server.subprocess,
+            "run",
+            return_value=SimpleNamespace(stdout=output, returncode=0),
+        ) as run:
+            report = dashboard_server.load_service_status()
+
+        self.assertEqual(len(report["units"]), 5)
+        self.assertEqual(report["units"][1]["state"], "Failed")
+        self.assertEqual(report["units"][1]["result"], "exit-code")
+        self.assertEqual(report["units"][2]["state"], "Active")
+        self.assertEqual(report["units"][2]["next_run"], "Sat 2026-11-14 12:01:00 MST")
+        self.assertEqual(report["units"][3]["state"], "Succeeded")
+        self.assertEqual(report["units"][3]["tone"], "ok")
+        args, kwargs = run.call_args
+        self.assertEqual(args[0][:3], ["systemctl", "show", "--no-pager"])
+        self.assertEqual(kwargs["timeout"], 2)
+        self.assertFalse(kwargs["check"])
+
+    def test_load_service_status_handles_missing_systemctl(self):
+        with patch.object(
+            dashboard_server.subprocess, "run", side_effect=FileNotFoundError
+        ):
+            report = dashboard_server.load_service_status()
+
+        self.assertEqual(report["units"], [])
+        self.assertEqual(report["error"], "Service status unavailable")
+
+    def test_load_service_status_handles_unreachable_systemd(self):
+        with patch.object(
+            dashboard_server.subprocess,
+            "run",
+            return_value=SimpleNamespace(stdout="", returncode=1),
+        ):
+            report = dashboard_server.load_service_status()
+
+        self.assertEqual(report["units"], [])
+        self.assertEqual(report["error"], "Service status unavailable")
+
+    def test_render_service_status_escapes_output_and_has_no_actions(self):
+        html = build_dashboard_html(
+            {"devices": []},
+            {
+                "checked_at": "2026-11-14 12:00 MST",
+                "units": [{
+                    "name": "MQTT <broker>",
+                    "unit": "mosquitto.service",
+                    "state": "Active",
+                    "tone": "ok",
+                    "detail": "<running>",
+                    "last_activity": "Sat 2026-11-14 12:00 MST",
+                    "next_run": "-",
+                }],
+            },
+        )
+
+        self.assertIn("<h2>Services</h2>", html)
+        self.assertIn("<th>Last result</th>", html)
+        self.assertIn('<h2 class="devices-heading">Devices</h2>', html)
+        self.assertIn("MQTT &lt;broker&gt;", html)
+        self.assertIn("&lt;running&gt;", html)
+        self.assertNotIn("<running>", html)
+        self.assertNotIn("data-service-action", html)
+
     def test_migrated_dashboard_module_loads_from_new_service_path(self):
         self.assertTrue(MIGRATED_DASHBOARD_PATH.exists())
         self.assertEqual(
@@ -660,7 +742,22 @@ class DashboardServerTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            handler = make_handler(status_path, quiet=True)
+            handler = make_handler(
+                status_path,
+                quiet=True,
+                service_status_loader=lambda: {
+                    "checked_at": "2026-11-14 12:00 MST",
+                    "units": [{
+                        "name": "Dashboard",
+                        "unit": "iot-dashboard.service",
+                        "state": "Active",
+                        "tone": "ok",
+                        "detail": "running",
+                        "last_activity": "Sat 2026-11-14 12:00 MST",
+                        "next_run": "-",
+                    }],
+                },
+            )
             server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), handler)
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
@@ -679,6 +776,7 @@ class DashboardServerTests(unittest.TestCase):
             self.assertEqual(response.getheader("Content-Type"), "text/html; charset=utf-8")
             self.assertIn("Pi IoT Dashboard", body)
             self.assertIn("esp32-s3-sensor", body)
+            self.assertIn("iot-dashboard.service", body)
 
 
 if __name__ == "__main__":

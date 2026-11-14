@@ -419,6 +419,8 @@ http://localhost:8080
 
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows combined health, heartbeat freshness, retained availability, and expandable device details. A declared sleepy device can show `SLEEPING` and `FRESH` with either retained availability value; the separate availability column shows what the device last reported.
 
+The Services table reads a fixed list of local systemd units: Mosquitto, the MQTT listener, the health-monitor timer and one-shot service, and the dashboard. It shows state, last result, last activity, and the timer's next run when systemd provides it. A successful health-monitor run is shown as `Succeeded` even though its one-shot service becomes inactive afterward. This table is read-only; restart controls require authentication and a narrowly scoped privilege rule before they are added.
+
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
 The `birdfeeder-01` detail row has buttons for `record_now`, `stay_awake`, `sleep_now`, and `stream_on`. The dashboard publishes non-retained commands to the existing Birdfeeder MQTT topic and shows the immediate device acknowledgement. `record_now` confirms that capture started, not that upload finished; check later telemetry for the upload result. Stream duration can be 60, 120, or 180 seconds. The last reported stream URL is shown in the row, and a successful `stream_on` response activates an `Open stream` link immediately. The browser must be able to reach the ESP32 LAN address on port 81. The active link and command result survive the dashboard's 10-second refresh in that browser tab.

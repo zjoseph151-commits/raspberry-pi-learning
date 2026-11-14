@@ -425,6 +425,8 @@ The `birdfeeder-01` detail row has buttons for `record_now`, `stay_awake`, `slee
 
 These controls currently have no password. Anyone who can reach the dashboard on the LAN can send these four commands. The POST endpoint only accepts the known commands as same-origin JSON requests; password protection remains future work.
 
+The `front-porch-camera-01` detail row has `start_stream`, `stop_stream`, `stream_info`, and `status_now` buttons. Start stream offers 10, 30, 60, 120, 300, and 600-second windows (120 seconds by default). The row shows the camera's port-80 MJPEG URL and an `Open stream` link while the camera reports an active stream. The browser must be able to reach the camera's LAN address. Command results and stream state survive dashboard refreshes in that browser tab while the next health snapshot catches up. These buttons also have no password.
+
 ### Device Onboarding Contract
 
 New basic MQTT devices can be added now by following `docs/device-onboarding.md`.

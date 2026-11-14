@@ -100,6 +100,8 @@ The dashboard summary now shows combined health, heartbeat freshness, and retain
 
 The `birdfeeder-01` detail row also exposes its four MQTT commands and temporary MJPEG stream URL. The dashboard service publishes commands and waits for a response; the listener still only archives command/response traffic. These controls are currently unauthenticated on the LAN.
 
+The `front-porch-camera-01` detail row exposes `start_stream`, `stop_stream`, `stream_info`, and `status_now`, plus its port-80 MJPEG URL and active stream link. The same dashboard command path waits for the camera's response fields. These controls are also unauthenticated on the LAN.
+
 ## Data Flow
 
 ```mermaid

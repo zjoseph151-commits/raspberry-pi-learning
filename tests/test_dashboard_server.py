@@ -112,6 +112,7 @@ class DashboardServerTests(unittest.TestCase):
         self.assertEqual(parser.title, "Pi IoT Dashboard")
         self.assertIn("var refreshAfter = Date.now() + 10000", html)
         self.assertIn('src="/assets/birdfeeder-controls.js"', html)
+        self.assertIn('src="/assets/front-porch-controls.js"', html)
         self.assertIn("Generated at: 2026-07-05T12:00:00+00:00", html)
         self.assertIn("esp32-s3-sensor", html)
         self.assertIn("garage-sensor", html)
@@ -190,6 +191,193 @@ class DashboardServerTests(unittest.TestCase):
             "http://[bad:81/stream",
         ):
             self.assertEqual(valid(url), "")
+
+    def test_porch_controls_render_only_for_front_porch_camera(self):
+        html = build_dashboard_html(
+            {
+                "devices": [
+                    {
+                        "device": "front-porch-camera-01",
+                        "latest_status": {
+                            "received_at": "2026-11-14T12:00:00+00:00",
+                            "fields": {
+                                "ip": "10.0.0.133",
+                                "stream_url": "http://10.0.0.133/stream",
+                                "stream_active": True,
+                                "stream_remaining_seconds": 95,
+                            },
+                        },
+                    },
+                    {"device": "climate-01"},
+                ]
+            }
+        )
+
+        for command in ("start_stream", "stop_stream", "stream_info", "status_now"):
+            self.assertIn(
+                f'<button type="button" data-porch-command="{command}">', html
+            )
+        self.assertIn('data-stream-url="http://10.0.0.133/stream"', html)
+        self.assertIn('data-stream-active="true"', html)
+        self.assertIn('data-stream-remaining="95"', html)
+        self.assertEqual(html.count('class="detail-panel porch-controls"'), 1)
+        self.assertEqual(html.count('class="detail-panel birdfeeder-controls"'), 0)
+
+    def test_porch_stream_url_accepts_only_private_camera_endpoint(self):
+        valid = dashboard_server.porch_stream_url
+        self.assertEqual(
+            valid("http://10.0.0.133:80/stream"), "http://10.0.0.133/stream"
+        )
+        for url in (
+            "javascript:alert(1)",
+            "http://example.com/stream",
+            "http://127.0.0.1/stream",
+            "http://10.0.0.133:81/stream",
+            "http://10.0.0.133/other",
+            "http://[bad/stream",
+        ):
+            self.assertEqual(valid(url), "")
+
+    def test_send_porch_command_uses_camera_response_fields(self):
+        class FakeClient:
+            def connect(self, host, port, keepalive):
+                self.connection = (host, port, keepalive)
+
+            def loop_start(self):
+                self.on_connect(self, None, None, 0, None)
+
+            def subscribe(self, topic):
+                self.subscription = topic
+                self.on_subscribe(
+                    self, None, 1, [SimpleNamespace(is_failure=False)], None
+                )
+                return 0, 1
+
+            def publish(self, topic, payload, qos, retain):
+                self.published = (topic, json.loads(payload), qos, retain)
+                response = {
+                    "device": "front-porch-camera-01",
+                    "type": "responses",
+                    "command": "start_stream",
+                    "success": True,
+                    "stream_url": "http://10.0.0.133/stream",
+                    "stream_active": True,
+                    "stream_remaining_seconds": 120,
+                }
+                self.on_message(
+                    self,
+                    None,
+                    SimpleNamespace(
+                        topic=self.subscription,
+                        payload=json.dumps(response).encode("utf-8"),
+                    ),
+                )
+                return SimpleNamespace(rc=0)
+
+            def disconnect(self):
+                pass
+
+            def loop_stop(self):
+                pass
+
+        client = FakeClient()
+        with patch("paho.mqtt.client.Client", return_value=client):
+            response = dashboard_server.send_porch_command("start_stream", 120)
+
+        self.assertEqual(client.connection, ("localhost", 1883, 15))
+        self.assertEqual(client.subscription, "home/devices/front-porch-camera-01/responses")
+        self.assertEqual(
+            client.published,
+            (
+                "home/devices/front-porch-camera-01/commands",
+                {
+                    "device": "front-porch-camera-01",
+                    "command": "start_stream",
+                    "duration_seconds": 120,
+                },
+                0,
+                False,
+            ),
+        )
+        self.assertEqual(response["message"], "Stream started")
+        self.assertEqual(response["stream_url"], "http://10.0.0.133/stream")
+        self.assertTrue(response["stream_active"])
+        self.assertEqual(response["stream_remaining_seconds"], 120)
+
+    def test_porch_command_rejects_bad_duration_before_mqtt(self):
+        for duration in (9, 601, True, "120"):
+            with self.assertRaises(ValueError):
+                dashboard_server.send_porch_command("start_stream", duration)
+        with self.assertRaises(ValueError):
+            dashboard_server.send_porch_command("stop_stream", 120)
+
+    def test_post_porch_command_validates_and_returns_camera_state(self):
+        calls = []
+
+        def send_command(command, duration_seconds):
+            calls.append((command, duration_seconds))
+            return {
+                "ok": True,
+                "command": command,
+                "message": "Stream started",
+                "stream_url": "http://10.0.0.133/stream",
+                "stream_active": True,
+                "stream_remaining_seconds": 120,
+            }
+
+        handler = make_handler(
+            Path("missing-status.json"), quiet=True, porch_command_sender=send_command
+        )
+        server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+
+        def request(path, payload, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", path, body=json.dumps(payload),
+                headers={"Content-Type": "application/json", **(headers or {})},
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            return response.status, body
+
+        try:
+            path = dashboard_server.PORCH_COMMAND_PATH
+            status, body = request(path, {"command": "start_stream", "duration_seconds": 120})
+            self.assertEqual(status, 200)
+            self.assertTrue(body["stream_active"])
+            self.assertEqual(calls, [("start_stream", 120)])
+
+            status, _ = request(path, {"command": "stream_info"})
+            self.assertEqual(status, 200)
+            self.assertEqual(calls[-1], ("stream_info", None))
+
+            for invalid in (
+                {"command": "reboot"},
+                {"command": "start_stream", "duration_seconds": 9},
+                {"command": "start_stream", "duration_seconds": 601},
+                {"command": "start_stream", "duration_seconds": True},
+                {"command": "stop_stream", "duration_seconds": 120},
+            ):
+                status, _ = request(path, invalid)
+                self.assertEqual(status, 400)
+            status, _ = request(path, {"command": "status_now"}, {"Origin": "http://evil.example"})
+            self.assertEqual(status, 403)
+            self.assertEqual(len(calls), 2)
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/assets/front-porch-controls.js")
+            response = connection.getresponse()
+            script = response.read().decode("utf-8")
+            connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn("data-porch-controls", script)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
     def test_send_birdfeeder_command_publishes_without_retain_and_uses_response(self):
         class FakeClient:

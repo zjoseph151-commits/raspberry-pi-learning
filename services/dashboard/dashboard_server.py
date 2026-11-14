@@ -36,21 +36,26 @@ BIRDFEEDER_COMMANDS = frozenset({"record_now", "stay_awake", "sleep_now", "strea
 BIRDFEEDER_STREAM_DURATIONS = frozenset({60, 120, 180})
 BIRDFEEDER_COMMAND_LOCK = Lock()
 BIRDFEEDER_SCRIPT_PATH = Path(__file__).with_name("birdfeeder_controls.js")
+PORCH_DEVICE_ID = "front-porch-camera-01"
+PORCH_COMMAND_PATH = f"/api/devices/{PORCH_DEVICE_ID}/commands"
+PORCH_COMMANDS = frozenset({"start_stream", "stop_stream", "stream_info", "status_now"})
+PORCH_COMMAND_LOCK = Lock()
+PORCH_SCRIPT_PATH = Path(__file__).with_name("front_porch_controls.js")
 
 
-def birdfeeder_stream_url(value: Any) -> str:
-    """Accept only the ESP32's private-LAN MJPEG endpoint."""
+def private_stream_url(value: Any, port: int) -> str:
+    """Accept only a private-LAN MJPEG endpoint on the expected port."""
     if not isinstance(value, str):
         return ""
     try:
         parsed = urlsplit(value)
         address = IPv4Address(parsed.hostname or "")
-        port = parsed.port
+        actual_port = parsed.port
     except (AddressValueError, ValueError):
         return ""
     if (
         parsed.scheme != "http"
-        or port != 81
+        or actual_port not in ((None, 80) if port == 80 else (port,))
         or parsed.path != "/stream"
         or parsed.username is not None
         or parsed.password is not None
@@ -61,7 +66,16 @@ def birdfeeder_stream_url(value: Any) -> str:
         or address.is_unspecified
     ):
         return ""
-    return f"http://{address}:81/stream"
+    suffix = "" if port == 80 else f":{port}"
+    return f"http://{address}{suffix}/stream"
+
+
+def birdfeeder_stream_url(value: Any) -> str:
+    return private_stream_url(value, 81)
+
+
+def porch_stream_url(value: Any) -> str:
+    return private_stream_url(value, 80)
 
 
 def birdfeeder_status_stream_url(device: dict[str, Any]) -> str:
@@ -71,18 +85,26 @@ def birdfeeder_status_stream_url(device: dict[str, Any]) -> str:
     return birdfeeder_stream_url(f"http://{address}:81/stream") if address else ""
 
 
-def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -> dict[str, Any]:
-    """Publish one command and wait briefly for the matching non-retained response."""
-    if command not in BIRDFEEDER_COMMANDS:
-        raise ValueError("Unsupported command")
-    if command == "stream_on":
-        if duration_seconds not in BIRDFEEDER_STREAM_DURATIONS:
-            raise ValueError("Unsupported stream duration")
-    elif duration_seconds is not None:
-        raise ValueError("Duration is only valid for stream_on")
+def porch_status_stream_url(device: dict[str, Any]) -> str:
+    latest_status = device.get("latest_status")
+    fields = latest_status.get("fields") if isinstance(latest_status, dict) else None
+    if not isinstance(fields, dict):
+        return ""
+    url = porch_stream_url(fields.get("stream_url"))
+    if url:
+        return url
+    address = fields.get("ip")
+    return porch_stream_url(f"http://{address}/stream") if address else ""
 
+
+def publish_command_and_wait(
+    device_id: str, command: str, duration_seconds: int | None
+) -> dict[str, Any]:
+    """Publish one non-retained command after subscribing to its response topic."""
     from paho.mqtt import client as mqtt
 
+    command_topic = f"home/devices/{device_id}/commands"
+    response_topic = f"home/devices/{device_id}/responses"
     subscribed = Event()
     answered = Event()
     result: dict[str, Any] = {}
@@ -93,25 +115,25 @@ def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -
             result["error"] = "Could not connect to MQTT broker"
             subscribed.set()
             return
-        subscribe_result, _ = client.subscribe(BIRDFEEDER_RESPONSE_TOPIC)
+        subscribe_result, _ = client.subscribe(response_topic)
         if subscribe_result != mqtt.MQTT_ERR_SUCCESS:
-            result["error"] = "Could not subscribe to Birdfeeder responses"
+            result["error"] = "Could not subscribe to device responses"
             subscribed.set()
 
     def on_subscribe(client, userdata, mid, reason_codes, properties):
         if any(code.is_failure for code in reason_codes):
-            result["error"] = "Birdfeeder response subscription was rejected"
+            result["error"] = "Device response subscription was rejected"
         subscribed.set()
 
     def on_message(client, userdata, message):
-        if message.topic != BIRDFEEDER_RESPONSE_TOPIC:
+        if message.topic != response_topic:
             return
         try:
             payload = json.loads(message.payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             return
         if (
-            validate_device_payload(BIRDFEEDER_RESPONSE_TOPIC, payload) is None
+            validate_device_payload(response_topic, payload) is None
             and payload.get("command") == command
         ):
             result["response"] = payload
@@ -120,7 +142,7 @@ def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -
     client.on_connect = on_connect
     client.on_subscribe = on_subscribe
     client.on_message = on_message
-    payload: dict[str, Any] = {"device": BIRDFEEDER_DEVICE_ID, "command": command}
+    payload: dict[str, Any] = {"device": device_id, "command": command}
     if duration_seconds is not None:
         payload["duration_seconds"] = duration_seconds
 
@@ -132,20 +154,32 @@ def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -
         if result.get("error"):
             raise ConnectionError(result["error"])
         published = client.publish(
-            BIRDFEEDER_COMMAND_TOPIC,
+            command_topic,
             json.dumps(payload, separators=(",", ":")),
             qos=0,
             retain=False,
         )
         if published.rc != mqtt.MQTT_ERR_SUCCESS:
-            raise ConnectionError("Could not publish Birdfeeder command")
+            raise ConnectionError("Could not publish device command")
         if not answered.wait(8):
             raise TimeoutError("No acknowledgement; the command may have run")
     finally:
         client.disconnect()
         client.loop_stop()
 
-    response = result["response"]
+    return result["response"]
+
+
+def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -> dict[str, Any]:
+    if command not in BIRDFEEDER_COMMANDS:
+        raise ValueError("Unsupported command")
+    if command == "stream_on":
+        if duration_seconds not in BIRDFEEDER_STREAM_DURATIONS:
+            raise ValueError("Unsupported stream duration")
+    elif duration_seconds is not None:
+        raise ValueError("Duration is only valid for stream_on")
+
+    response = publish_command_and_wait(BIRDFEEDER_DEVICE_ID, command, duration_seconds)
     success = response["success"]
     return {
         "ok": success,
@@ -159,6 +193,37 @@ def send_birdfeeder_command(command: str, duration_seconds: int | None = None) -
         "duration_seconds": (
             duration_seconds if success and command == "stream_on" else 0
         ),
+    }
+
+
+def send_porch_command(command: str, duration_seconds: int | None = None) -> dict[str, Any]:
+    if command not in PORCH_COMMANDS:
+        raise ValueError("Unsupported command")
+    if command == "start_stream":
+        if type(duration_seconds) is not int or not 10 <= duration_seconds <= 600:
+            raise ValueError("Unsupported stream duration")
+    elif duration_seconds is not None:
+        raise ValueError("Duration is only valid for start_stream")
+
+    response = publish_command_and_wait(PORCH_DEVICE_ID, command, duration_seconds)
+    success = response["success"]
+    active = response.get("stream_active") is True
+    remaining = response.get("stream_remaining_seconds")
+    if type(remaining) is not int or remaining < 0:
+        remaining = 0
+    messages = {
+        "start_stream": "Stream started",
+        "stop_stream": "Stream stopped",
+        "stream_info": "Stream active" if active else "Stream idle",
+        "status_now": "Status published",
+    }
+    return {
+        "ok": success,
+        "command": command,
+        "message": messages[command] if success else str(response.get("error") or "Command failed")[:160],
+        "stream_url": porch_stream_url(response.get("stream_url")),
+        "stream_active": active,
+        "stream_remaining_seconds": remaining,
     }
 
 
@@ -380,6 +445,51 @@ def render_birdfeeder_controls(device: dict[str, Any]) -> str:
     )
 
 
+def render_porch_controls(device: dict[str, Any]) -> str:
+    if device.get("device") != PORCH_DEVICE_ID:
+        return ""
+
+    latest_status = device.get("latest_status")
+    fields = latest_status.get("fields") if isinstance(latest_status, dict) else None
+    fields = fields if isinstance(fields, dict) else {}
+    stream_url = porch_status_stream_url(device)
+    active = fields.get("stream_active") is True
+    remaining = fields.get("stream_remaining_seconds")
+    remaining = remaining if type(remaining) is int and remaining > 0 else 0
+    received_at = latest_status.get("received_at", "") if isinstance(latest_status, dict) else ""
+    return (
+        '<section class="detail-panel porch-controls" '
+        f'data-porch-controls data-stream-url="{text(stream_url)}" '
+        f'data-stream-active="{str(active).lower()}" '
+        f'data-stream-remaining="{remaining}" '
+        f'data-status-at="{text(received_at)}">'
+        "<h2>Controls</h2>"
+        '<div class="porch-actions">'
+        '<label for="porch-stream-duration">Stream duration</label>'
+        '<select id="porch-stream-duration" data-stream-duration>'
+        '<option value="10">10s</option>'
+        '<option value="30">30s</option>'
+        '<option value="60">60s</option>'
+        '<option value="120" selected>120s</option>'
+        '<option value="300">5m</option>'
+        '<option value="600">10m</option>'
+        "</select>"
+        '<button type="button" data-porch-command="start_stream">Start stream</button>'
+        '<button type="button" data-porch-command="stop_stream">Stop stream</button>'
+        '<button type="button" data-porch-command="stream_info">Stream info</button>'
+        '<button type="button" data-porch-command="status_now">Status now</button>'
+        "</div>"
+        '<p class="porch-result" data-command-result role="status" aria-live="polite"></p>'
+        '<div class="porch-stream">'
+        '<strong>Stream URL</strong>'
+        f'<code data-stream-address>{text(stream_url) or "Unavailable"}</code>'
+        '<a data-stream-link href="#" target="_blank" rel="noopener noreferrer" hidden>Open stream</a>'
+        '<span data-stream-state>Inactive</span>'
+        "</div>"
+        "</section>"
+    )
+
+
 def render_device_row(device: dict[str, Any], generated_at: Any = "") -> str:
     """Render one device row from the health monitor JSON shape."""
     return (
@@ -406,6 +516,7 @@ def render_device_detail_row(device: dict[str, Any]) -> str:
         render_event_panel("Latest Status", device.get("latest_status")),
         render_event_panel("Availability Event", device.get("availability")),
         render_birdfeeder_controls(device),
+        render_porch_controls(device),
     ]
     panels_html = "".join(panel for panel in panels if panel)
 
@@ -573,16 +684,17 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       margin: 0 0 0.4rem;
       font-size: 1rem;
     }}
-    .birdfeeder-controls {{
+    .birdfeeder-controls, .porch-controls {{
       grid-column: 1 / -1;
     }}
-    .birdfeeder-actions, .birdfeeder-stream {{
+    .birdfeeder-actions, .birdfeeder-stream, .porch-actions, .porch-stream {{
       display: flex;
       align-items: center;
       flex-wrap: wrap;
       gap: 0.5rem;
     }}
-    .birdfeeder-actions button, .birdfeeder-actions select {{
+    .birdfeeder-actions button, .birdfeeder-actions select,
+    .porch-actions button, .porch-actions select {{
       min-height: 2.4rem;
       border: 1px solid #9ca3af;
       border-radius: 4px;
@@ -591,13 +703,14 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       padding: 0.45rem 0.7rem;
       font: inherit;
     }}
-    .birdfeeder-actions button {{
+    .birdfeeder-actions button, .porch-actions button {{
       cursor: pointer;
     }}
-    .birdfeeder-actions button:hover:not(:disabled) {{
+    .birdfeeder-actions button:hover:not(:disabled),
+    .porch-actions button:hover:not(:disabled) {{
       background: #e5e7eb;
     }}
-    .birdfeeder-actions button:disabled {{
+    .birdfeeder-actions button:disabled, .porch-actions button:disabled {{
       cursor: wait;
       opacity: 0.55;
     }}
@@ -605,24 +718,26 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       background: #fef2f2;
       border-color: #fca5a5;
     }}
-    .birdfeeder-actions button[data-birdfeeder-command="stream_on"] {{
+    .birdfeeder-actions button[data-birdfeeder-command="stream_on"],
+    .porch-actions button[data-porch-command="start_stream"] {{
       background: #ecfdf5;
       border-color: #6ee7b7;
     }}
-    .birdfeeder-actions label, .birdfeeder-stream, .birdfeeder-result {{
+    .birdfeeder-actions label, .birdfeeder-stream, .birdfeeder-result,
+    .porch-actions label, .porch-stream, .porch-result {{
       font-size: 0.9rem;
     }}
-    .birdfeeder-result {{
+    .birdfeeder-result, .porch-result {{
       min-height: 1.2rem;
       margin: 0.7rem 0;
     }}
-    .birdfeeder-result.error {{
+    .birdfeeder-result.error, .porch-result.error {{
       color: #991b1b;
     }}
-    .birdfeeder-stream code {{
+    .birdfeeder-stream code, .porch-stream code {{
       overflow-wrap: anywhere;
     }}
-    .birdfeeder-stream a[hidden] {{
+    .birdfeeder-stream a[hidden], .porch-stream a[hidden] {{
       display: none;
     }}
     .detail-meta, .detail-topic {{
@@ -632,16 +747,18 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     }}
     dl {{
       display: grid;
-      grid-template-columns: max-content 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 0.35rem 0.75rem;
       margin: 0.75rem 0 0;
     }}
     dt {{
       color: #4b5563;
       font-weight: bold;
+      overflow-wrap: anywhere;
     }}
     dd {{
       margin: 0;
+      overflow-wrap: anywhere;
     }}
     .message, .empty, .muted {{
       color: #6b7280;
@@ -700,6 +817,7 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     }})();
   </script>
   <script src="/assets/birdfeeder-controls.js" defer></script>
+  <script src="/assets/front-porch-controls.js" defer></script>
 </head>
 <body>
   <h1>Pi IoT Dashboard</h1>
@@ -736,6 +854,7 @@ def make_handler(
     status_path: Path = STATUS_JSON_PATH,
     quiet: bool = False,
     command_sender: Callable[[str, int | None], dict[str, Any]] = send_birdfeeder_command,
+    porch_command_sender: Callable[[str, int | None], dict[str, Any]] = send_porch_command,
 ):
     """Create a request handler bound to a specific status JSON path."""
 
@@ -750,9 +869,13 @@ def make_handler(
             self.wfile.write(body)
 
         def do_GET(self) -> None:
-            if self.path == "/assets/birdfeeder-controls.js":
+            script_path = {
+                "/assets/birdfeeder-controls.js": BIRDFEEDER_SCRIPT_PATH,
+                "/assets/front-porch-controls.js": PORCH_SCRIPT_PATH,
+            }.get(self.path)
+            if script_path is not None:
                 try:
-                    body = BIRDFEEDER_SCRIPT_PATH.read_bytes()
+                    body = script_path.read_bytes()
                 except OSError:
                     self.send_error(500, "Could not load dashboard controls")
                     return
@@ -777,7 +900,21 @@ def make_handler(
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path != BIRDFEEDER_COMMAND_PATH:
+            if self.path == BIRDFEEDER_COMMAND_PATH:
+                commands = BIRDFEEDER_COMMANDS
+                stream_command = "stream_on"
+                stream_default = 60
+                duration_valid = lambda value: value in BIRDFEEDER_STREAM_DURATIONS
+                sender = command_sender
+                command_lock = BIRDFEEDER_COMMAND_LOCK
+            elif self.path == PORCH_COMMAND_PATH:
+                commands = PORCH_COMMANDS
+                stream_command = "start_stream"
+                stream_default = 120
+                duration_valid = lambda value: 10 <= value <= 600
+                sender = porch_command_sender
+                command_lock = PORCH_COMMAND_LOCK
+            else:
                 self.send_json(404, {"ok": False, "message": "Not Found"})
                 return
 
@@ -809,15 +946,15 @@ def make_handler(
                 return
 
             command = request.get("command")
-            if not isinstance(command, str) or command not in BIRDFEEDER_COMMANDS:
+            if not isinstance(command, str) or command not in commands:
                 self.send_json(400, {"ok": False, "message": "Unsupported command"})
                 return
             duration_seconds = None
-            if command == "stream_on":
-                duration_seconds = request.get("duration_seconds", 60)
+            if command == stream_command:
+                duration_seconds = request.get("duration_seconds", stream_default)
                 if (
                     type(duration_seconds) is not int
-                    or duration_seconds not in BIRDFEEDER_STREAM_DURATIONS
+                    or not duration_valid(duration_seconds)
                     or set(request) not in (
                         {"command"},
                         {"command", "duration_seconds"},
@@ -829,11 +966,11 @@ def make_handler(
                 self.send_json(400, {"ok": False, "message": "Unexpected command fields"})
                 return
 
-            if not BIRDFEEDER_COMMAND_LOCK.acquire(blocking=False):
+            if not command_lock.acquire(blocking=False):
                 self.send_json(409, {"ok": False, "message": "Another command is in progress"})
                 return
             try:
-                response = command_sender(command, duration_seconds)
+                response = sender(command, duration_seconds)
             except TimeoutError as error:
                 self.send_json(504, {"ok": False, "message": str(error)})
                 return
@@ -841,7 +978,7 @@ def make_handler(
                 self.send_json(503, {"ok": False, "message": str(error)})
                 return
             finally:
-                BIRDFEEDER_COMMAND_LOCK.release()
+                command_lock.release()
             self.send_json(200, response)
 
         def log_message(self, format: str, *args: Any) -> None:

@@ -22,6 +22,9 @@ This is the current source of truth for shared constants used by the service-own
 | Online threshold | `30` seconds |
 | Dashboard host | `0.0.0.0` |
 | Dashboard port | `8080` |
+| Dashboard hidden device IDs | `esp32-c3-test`, `esp32-s3-test`, `migration-test` |
+
+The hidden IDs are old test devices. Only dashboard rendering excludes them; MQTT logs and the health-monitor snapshot are preserved. Update `DASHBOARD_HIDDEN_DEVICE_IDS` to change this list.
 
 ## Device Onboarding Constants
 

@@ -33,6 +33,10 @@ class PlatformConfigTests(unittest.TestCase):
         self.assertEqual(platform.ONLINE_THRESHOLD_SECONDS, 30)
         self.assertEqual(platform.DASHBOARD_HOST, "0.0.0.0")
         self.assertEqual(platform.DASHBOARD_PORT, 8080)
+        self.assertEqual(
+            platform.DASHBOARD_HIDDEN_DEVICE_IDS,
+            {"esp32-c3-test", "esp32-s3-test", "migration-test"},
+        )
 
     def test_csv_and_report_columns_are_centralized(self):
         self.assertEqual(platform.DEVICE_REQUIRED_JSON_FIELDS, ["device"])

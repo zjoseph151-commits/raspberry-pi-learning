@@ -62,3 +62,8 @@ ONLINE_THRESHOLD_SECONDS = 30
 # Local dashboard binding.
 DASHBOARD_HOST = "0.0.0.0"
 DASHBOARD_PORT = 8080
+DASHBOARD_HIDDEN_DEVICE_IDS = frozenset({
+    "esp32-c3-test",
+    "esp32-s3-test",
+    "migration-test",
+})

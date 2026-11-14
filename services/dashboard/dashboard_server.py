@@ -12,7 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config.platform import DASHBOARD_HOST, DASHBOARD_PORT, DEVICE_STATUS_PATH
+from config.platform import (
+    DASHBOARD_HIDDEN_DEVICE_IDS,
+    DASHBOARD_HOST,
+    DASHBOARD_PORT,
+    DEVICE_STATUS_PATH,
+)
 
 STATUS_JSON_PATH = DEVICE_STATUS_PATH
 HOST = DASHBOARD_HOST
@@ -253,13 +258,22 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     generated_at = text(generated_at_value)
     message = status_report.get("message", "")
     devices = status_report.get("devices", [])
-    device_rows = ""
-
-    if isinstance(devices, list) and devices:
-        device_rows = "\n".join(
-            render_device_rows(device, generated_at_value)
+    visible_devices = (
+        [
+            device
             for device in devices
             if isinstance(device, dict)
+            and device.get("device") not in DASHBOARD_HIDDEN_DEVICE_IDS
+        ]
+        if isinstance(devices, list)
+        else []
+    )
+    device_rows = ""
+
+    if visible_devices:
+        device_rows = "\n".join(
+            render_device_rows(device, generated_at_value)
+            for device in visible_devices
         )
     else:
         device_rows = (

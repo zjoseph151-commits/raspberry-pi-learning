@@ -81,7 +81,7 @@ class DashboardServerTests(unittest.TestCase):
             "generated_at": "2026-07-05T12:00:00+00:00",
             "devices": [
                 {
-                    "device": "esp32-s3-test",
+                    "device": "esp32-s3-sensor",
                     "status": "ONLINE",
                     "received_at": "2026-07-05T11:59:45+00:00",
                     "topic": "home/esp32-s3/status",
@@ -110,7 +110,7 @@ class DashboardServerTests(unittest.TestCase):
         self.assertEqual(parser.title, "Pi IoT Dashboard")
         self.assertIn('<meta http-equiv="refresh" content="10">', html)
         self.assertIn("Generated at: 2026-07-05T12:00:00+00:00", html)
-        self.assertIn("esp32-s3-test", html)
+        self.assertIn("esp32-s3-sensor", html)
         self.assertIn("garage-sensor", html)
         self.assertIn('class="badge fresh">FRESH</span>', html)
         self.assertIn('class="badge stale">STALE</span>', html)
@@ -123,10 +123,33 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("<td>10000</td>", html)
         self.assertIn("<td>-57</td>", html)
         self.assertIn("Device Details", html)
-        self.assertIn('data-device-details-key="esp32-s3-test"', html)
+        self.assertIn('data-device-details-key="esp32-s3-sensor"', html)
         self.assertIn('data-device-details-key="garage-sensor"', html)
         self.assertIn('storageKey = "pi-iot-dashboard-open-details"', html)
         self.assertIn("localStorage.setItem(storageKey", html)
+
+    def test_build_dashboard_html_hides_old_test_devices(self):
+        status = {
+            "devices": [
+                {"device": "esp32-c3-test", "latest_status": {"fields": {"note": "old-c3"}}},
+                {"device": "esp32-s3-test"},
+                {"device": "migration-test"},
+                {"device": "esp32-c3-climate-01"},
+            ],
+        }
+
+        html = build_dashboard_html(status)
+
+        for device_id in ("esp32-c3-test", "esp32-s3-test", "migration-test"):
+            self.assertNotIn(device_id, html)
+        self.assertNotIn("old-c3", html)
+        self.assertIn('data-device-details-key="esp32-c3-climate-01"', html)
+
+    def test_build_dashboard_html_shows_empty_state_when_only_hidden_devices_exist(self):
+        html = build_dashboard_html({"devices": [{"device": "migration-test"}]})
+
+        self.assertNotIn('data-device-details-key="migration-test"', html)
+        self.assertIn("No device status data available.", html)
 
     def test_build_dashboard_html_renders_climate_device_details(self):
         status = {
@@ -233,7 +256,7 @@ class DashboardServerTests(unittest.TestCase):
                         "generated_at": "2026-07-05T12:00:00+00:00",
                         "devices": [
                             {
-                                "device": "esp32-s3-test",
+                                "device": "esp32-s3-sensor",
                                 "status": "ONLINE",
                                 "received_at": "2026-07-05T11:59:45+00:00",
                                 "topic": "home/esp32-s3/status",
@@ -265,7 +288,7 @@ class DashboardServerTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertEqual(response.getheader("Content-Type"), "text/html; charset=utf-8")
             self.assertIn("Pi IoT Dashboard", body)
-            self.assertIn("esp32-s3-test", body)
+            self.assertIn("esp32-s3-sensor", body)
 
 
 if __name__ == "__main__":

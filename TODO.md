@@ -15,11 +15,13 @@ This checklist tracks future work for turning the Raspberry Pi IoT learning proj
 
 ## Preserve Before Expanding
 
+Live verification steps: `docs/preserve-before-expanding.md`.
+
 - [ ] Confirm the live Raspberry Pi repository has the latest documentation from this repo.
 - [ ] Confirm all live systemd units still point to the intended `services/` scripts.
 - [ ] Confirm `WorkingDirectory=/home/zack/projects/raspberry-pi` remains correct for live services.
 - [ ] Confirm reboot behavior for `mqtt-listener.service`, `health-monitor.timer`, and `iot-dashboard.service`.
-- [ ] Keep runtime data out of Git while preserving `data/logs/.gitkeep` and `data/status/.gitkeep`.
+- [x] Keep runtime data out of Git while preserving `data/logs/.gitkeep` and `data/status/.gitkeep`.
 
 ## Known Consistency Items
 

@@ -112,6 +112,9 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("Generated at: 2026-07-05T12:00:00+00:00", html)
         self.assertIn("esp32-s3-sensor", html)
         self.assertIn("garage-sensor", html)
+        self.assertIn("<th>Health</th>", html)
+        self.assertIn('class="table-scroll"', html)
+        self.assertIn('class="badge health-unknown">UNKNOWN</span>', html)
         self.assertIn('class="badge fresh">FRESH</span>', html)
         self.assertIn('class="badge stale">STALE</span>', html)
         self.assertIn('class="badge availability-unknown">UNKNOWN</span>', html)
@@ -157,7 +160,8 @@ class DashboardServerTests(unittest.TestCase):
             "devices": [
                 {
                     "device": "esp32-c3-climate-01",
-                    "status": "OFFLINE",
+                    "status": "ONLINE",
+                    "health_state": "SLEEPING",
                     "received_at": "2026-08-03T12:00:00+00:00",
                     "topic": "home/devices/esp32-c3-climate-01/telemetry",
                     "type": "telemetry",
@@ -205,7 +209,8 @@ class DashboardServerTests(unittest.TestCase):
 
         html = build_dashboard_html(status)
 
-        self.assertIn('class="badge stale">STALE</span>', html)
+        self.assertIn('class="badge health-sleeping">SLEEPING</span>', html)
+        self.assertIn('class="badge fresh">FRESH</span>', html)
         self.assertIn('class="badge availability-offline">OFFLINE</span>', html)
         self.assertIn("<td>1m 0s</td>", html)
         self.assertIn("Latest Telemetry", html)

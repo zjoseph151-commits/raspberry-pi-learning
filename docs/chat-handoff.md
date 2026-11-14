@@ -45,6 +45,7 @@ Shared platform constants:
 
 ```text
 config/platform.py
+config/device_contract.py
 ```
 
 Runtime data paths:
@@ -81,6 +82,8 @@ flowchart LR
     Listener --> JsonlLog["data/logs/mqtt_messages.jsonl"]
     Listener --> CsvLog["data/logs/mqtt_messages.csv"]
     CsvLog --> Health["Health monitor<br/>services/health-monitor/health_monitor.py"]
+    JsonlLog --> Health
+    TextLog --> Health
     Health --> StatusJson["data/status/device_status.json"]
     StatusJson --> Dashboard["Dashboard<br/>services/dashboard/dashboard_server.py"]
     Dashboard --> Browser["Browser<br/>http://localhost:8080"]
@@ -104,7 +107,7 @@ commands
 responses
 ```
 
-For a device to appear in the current health monitor and dashboard, it must publish valid JSON with a `device` field. The current health/dashboard CSV fields are:
+Status and telemetry JSON must include a `device` that matches the canonical topic ID. Retained availability can also create device state without a heartbeat. The current CSV fields are:
 
 ```text
 received_at
@@ -116,13 +119,13 @@ uptime_ms
 wifi_rssi
 ```
 
-Plain-text retained availability messages are logged, normalized for dashboard details, and shown separately from heartbeat freshness. They do not drive the CSV-backed `ONLINE` or `OFFLINE` heartbeat status.
+Plain-text retained availability messages are logged and projected into device state separately from heartbeat freshness. Declared sleepy devices use three publish intervals (up to one hour) as their freshness window.
 
 ## Known Important Caveats
 
-- The platform currently has no SQLite database, device registry, MQTT authentication, schema validation, or dedicated per-device dashboard pages.
-- The health monitor groups by JSON `device`, not by parsing the MQTT topic path.
-- Any valid JSON message with a `device` field can become the latest health row for that device.
+- The platform currently has no SQLite database, device registry, MQTT authentication, per-device telemetry schema validation, or dedicated per-device dashboard pages.
+- Canonical topics are parsed and validated; older noncanonical `home/#` topics retain legacy behavior.
+- Canonical commands and responses are archived but never refresh heartbeat state. Invalid canonical JSON is retained in JSONL with a `validation_error` and excluded from device state.
 - ESP32 firmware version references are currently aligned to `0.2.1`; when changing firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
 - The default `python -m unittest discover` command does not find tests from the repository root in the current layout; use `python -m unittest discover -s tests -v`.
 
@@ -131,7 +134,7 @@ Plain-text retained availability messages are logged, normalized for dashboard d
 Run the focused Pi platform test suite from the repository root:
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest tests.test_platform_config tests.test_legacy_entrypoints tests.test_mqtt_listener tests.test_device_status tests.test_health_monitor tests.test_dashboard_server -v
+.\.venv\Scripts\python.exe -m unittest tests.test_platform_config tests.test_device_contract tests.test_device_pipeline tests.test_legacy_entrypoints tests.test_mqtt_listener tests.test_device_status tests.test_health_monitor tests.test_dashboard_server -v
 ```
 
 Run broader Python test discovery:
@@ -184,11 +187,12 @@ Reference platform context:
   home/devices/<device-id>/<message-type>
 - Supported message types:
   status, availability, telemetry, commands, responses
-- Valid JSON payloads should include a stable device field.
-- Current health/dashboard fields are:
+- Status and telemetry JSON must include a stable device field matching the canonical topic ID; commands may omit it.
+- Common status/telemetry payload fields are:
   device, type, count, uptime_ms, wifi_rssi
 - Extra telemetry fields are allowed, preserved in JSONL, and shown in expandable dashboard details.
 - Plain-text retained availability messages are logged and shown separately from heartbeat freshness; they do not drive dashboard FRESH/STALE state.
+- Sleepy devices should publish `sleepy:true` with `read_interval_ms` or `sleep_interval_seconds` in status so slow reporting stays fresh through three declared intervals.
 
 Your task:
 1. Inspect the current source project read-only.

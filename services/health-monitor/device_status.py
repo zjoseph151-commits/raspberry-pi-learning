@@ -10,6 +10,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from config.device_contract import (
+    is_device_namespace_topic,
+    parse_device_topic,
+)
 from config.platform import (
     DEVICE_REPORT_COLUMNS,
     MQTT_CSV_COLUMNS,
@@ -62,6 +66,16 @@ def latest_rows_by_device(rows: Iterable[dict[str, str]]) -> list[dict[str, str]
 
     for row in rows:
         device = (row.get("device") or "").strip()
+        topic = row.get("topic") or ""
+        if is_device_namespace_topic(topic):
+            parsed_topic = parse_device_topic(topic)
+            if (
+                parsed_topic is None
+                or parsed_topic[1] not in {"status", "telemetry"}
+                or device != parsed_topic[0]
+                or (row.get("type") and row["type"] != parsed_topic[1])
+            ):
+                continue
         received_at = parse_received_at(row.get("received_at", ""))
 
         if not device or received_at is None:

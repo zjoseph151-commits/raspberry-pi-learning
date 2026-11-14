@@ -17,27 +17,27 @@ This checklist tracks future work for turning the Raspberry Pi IoT learning proj
 
 Live verification steps: `docs/preserve-before-expanding.md`.
 
-- [ ] Confirm the live Raspberry Pi repository has the latest documentation from this repo.
-- [ ] Confirm all live systemd units still point to the intended `services/` scripts.
-- [ ] Confirm `WorkingDirectory=/home/zack/projects/raspberry-pi` remains correct for live services.
-- [ ] Confirm reboot behavior for `mqtt-listener.service`, `health-monitor.timer`, and `iot-dashboard.service`.
+- [x] Confirm the live Raspberry Pi repository has the latest documentation from this repo.
+- [x] Confirm all live systemd units still point to the intended `services/` scripts.
+- [x] Confirm `WorkingDirectory=/home/zack/projects/raspberry-pi` remains correct for live services.
+- [x] Confirm reboot behavior for `mqtt-listener.service`, `health-monitor.timer`, and `iot-dashboard.service`.
 - [x] Keep runtime data out of Git while preserving `data/logs/.gitkeep` and `data/status/.gitkeep`.
 
 ## Known Consistency Items
 
-- [ ] When changing ESP32 firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
-- [ ] Decide whether `docs/current-state-architecture.md` should remain a historical pre-migration baseline only or receive an explicit post-migration addendum.
-- [ ] Review old migration docs that still mention legacy `logs/` paths and add short notes where needed that current runtime paths are now under `data/`.
+- [x] Keep ESP32 firmware version references aligned across `src/main.cpp`, README examples, and firmware source-contract tests.
+- [x] Retain `docs/current-state-architecture.md` as the historical pre-migration baseline; use `docs/service-layout.md` for the current layout.
+- [x] Label legacy `logs/` commands in the old migration docs as historical; current runtime paths are under `data/`.
 
 ## Device Model
 
-- [ ] Promote `home/devices/<device-id>/<message-type>` from documentation contract into parsed platform behavior.
-- [ ] Validate that JSON payload `device` matches the topic `<device-id>`.
-- [ ] Separate device state from raw MQTT event logging.
-- [ ] Treat retained availability messages as first-class device state.
-- [ ] Combine availability state and heartbeat freshness into a clearer health model.
-- [ ] Define minimum fields for `status`, `telemetry`, `commands`, and `responses`.
-- [ ] Decide how to handle devices that publish telemetry less frequently than the current 30-second online threshold.
+- [x] Promote `home/devices/<device-id>/<message-type>` from documentation contract into parsed platform behavior.
+- [x] Validate that JSON payload `device` matches the topic `<device-id>`.
+- [x] Separate derived device state from raw MQTT event logging.
+- [x] Treat retained availability messages as first-class device state.
+- [x] Combine availability state and heartbeat freshness into a clearer health model.
+- [x] Define minimum fields for `status`, `telemetry`, `commands`, and `responses`.
+- [x] Use three declared publish intervals for sleepy devices instead of the fixed 30-second freshness window.
 
 ## Data Storage
 

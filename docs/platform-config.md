@@ -20,6 +20,7 @@ This is the current source of truth for shared constants used by the service-own
 | CSV MQTT log | `data/logs/mqtt_messages.csv` |
 | Device status JSON | `data/status/device_status.json` |
 | Online threshold | `30` seconds |
+| Sleepy freshness | `3` declared intervals, capped at `3600` seconds |
 | Dashboard host | `0.0.0.0` |
 | Dashboard port | `8080` |
 | Dashboard hidden device IDs | `esp32-c3-test`, `esp32-s3-test`, `migration-test` |
@@ -39,7 +40,7 @@ The shared config also records the current device onboarding contract:
 | Required JSON field | `device` |
 | Current health fields | `device`, `type`, `count`, `uptime_ms`, `wifi_rssi` |
 
-The listener still subscribes to `home/#`; these constants define the preferred topic and payload shape for new devices and future platform code.
+The listener still subscribes to `home/#`; `config/device_contract.py` parses canonical topics and validates payload identity and minimum command/response fields. `DEVICE_REQUIRED_JSON_FIELDS` describes status/telemetry identity; command payloads may omit `device`.
 
 ## Centralized Columns
 
@@ -55,7 +56,7 @@ uptime_ms
 wifi_rssi
 ```
 
-The health monitor adds `status` when building device reports.
+The health monitor adds heartbeat `status`, a combined `health_state`, `heartbeat_received_at`, `stale_after_seconds`, and `sleepy` when building its device-state snapshot.
 
 ## Import Behavior
 
@@ -88,6 +89,6 @@ New MQTT devices can be added now if they publish valid JSON under `home/#` and 
 {"device":"example-device","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-The current platform will log the message, include valid JSON in JSONL, write fixed CSV fields, and show the device in the health dashboard after the health monitor runs. Extra status and telemetry fields appear in expandable dashboard details.
+The current platform will log the message, include valid JSON in JSONL, write CSV for valid canonical status/telemetry, and show the derived state in the dashboard after the health monitor runs. Extra status and telemetry fields appear in expandable details.
 
 For the complete onboarding contract, see `docs/device-onboarding.md`. Rich charts, dedicated per-device pages, per-device display rules, and a registry remain future platform stages.

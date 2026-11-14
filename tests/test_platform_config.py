@@ -31,6 +31,8 @@ class PlatformConfigTests(unittest.TestCase):
             Path("data/status/device_status.json"),
         )
         self.assertEqual(platform.ONLINE_THRESHOLD_SECONDS, 30)
+        self.assertEqual(platform.SLEEPY_STALE_AFTER_INTERVALS, 3)
+        self.assertEqual(platform.MAX_SLEEPY_STALE_AFTER_SECONDS, 3600)
         self.assertEqual(platform.DASHBOARD_HOST, "0.0.0.0")
         self.assertEqual(platform.DASHBOARD_PORT, 8080)
         self.assertEqual(

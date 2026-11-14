@@ -140,6 +140,14 @@ def status_badge(status: Any) -> str:
     return freshness_badge(status)
 
 
+def health_badge(device: dict[str, Any]) -> str:
+    """Render the monitor's combined availability and freshness state."""
+    state = str(device.get("health_state") or "UNKNOWN").upper()
+    if state not in {"HEALTHY", "SLEEPING", "OFFLINE", "STALE", "RECENT", "UNKNOWN"}:
+        state = "UNKNOWN"
+    return f'<span class="badge health-{state.lower()}">{text(state)}</span>'
+
+
 def availability_state(device: dict[str, Any]) -> str:
     """Return the latest retained availability state for a device."""
     availability = device.get("availability")
@@ -207,6 +215,7 @@ def render_device_row(device: dict[str, Any], generated_at: Any = "") -> str:
     return (
         "<tr>"
         f"<td>{text(device.get('device', ''))}</td>"
+        f"<td>{health_badge(device)}</td>"
         f"<td>{freshness_badge(device.get('status', 'UNKNOWN'))}</td>"
         f"<td>{availability_badge(device)}</td>"
         f"<td>{text(device.get('received_at', ''))}</td>"
@@ -234,7 +243,7 @@ def render_device_detail_row(device: dict[str, Any]) -> str:
 
     return (
         '<tr class="details-row">'
-        '<td colspan="10">'
+        '<td colspan="11">'
         f'<details data-device-details-key="{text(detail_key(device))}">'
         "<summary>Device Details</summary>"
         f'<div class="details-grid">{panels_html}</div>'
@@ -277,7 +286,7 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
         )
     else:
         device_rows = (
-            '<tr><td colspan="10" class="empty">No device status data available.</td></tr>'
+            '<tr><td colspan="11" class="empty">No device status data available.</td></tr>'
         )
 
     message_html = f'<p class="message">{text(message)}</p>' if message else ""
@@ -301,9 +310,13 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
     }}
     table {{
       width: 100%;
+      min-width: 72rem;
       border-collapse: collapse;
       margin-top: 1rem;
       background: #ffffff;
+    }}
+    .table-scroll {{
+      overflow-x: auto;
     }}
     th, td {{
       border: 1px solid #d1d5db;
@@ -331,6 +344,30 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       background: #fee2e2;
     }}
     .unknown, .availability-unknown {{
+      color: #374151;
+      background: #e5e7eb;
+    }}
+    .health-healthy {{
+      color: #065f46;
+      background: #d1fae5;
+    }}
+    .health-sleeping {{
+      color: #92400e;
+      background: #fef3c7;
+    }}
+    .health-offline {{
+      color: #991b1b;
+      background: #fee2e2;
+    }}
+    .health-stale {{
+      color: #9a3412;
+      background: #ffedd5;
+    }}
+    .health-recent {{
+      color: #1e40af;
+      background: #dbeafe;
+    }}
+    .health-unknown {{
       color: #374151;
       background: #e5e7eb;
     }}
@@ -431,10 +468,12 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
   <h1>Pi IoT Dashboard</h1>
   <p>Generated at: {generated_at}</p>
   {message_html}
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
         <th>Device</th>
+        <th>Health</th>
         <th>Heartbeat</th>
         <th>Availability</th>
         <th>Latest received_at</th>
@@ -450,6 +489,7 @@ def build_dashboard_html(status_report: dict[str, Any]) -> str:
       {device_rows}
     </tbody>
   </table>
+  </div>
 </body>
 </html>
 """

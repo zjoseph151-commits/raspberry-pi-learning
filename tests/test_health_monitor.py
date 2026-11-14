@@ -113,6 +113,10 @@ class HealthMonitorTests(unittest.TestCase):
                     {
                         "device": "esp32-s3-test",
                         "status": "ONLINE",
+                        "health_state": "RECENT",
+                        "heartbeat_received_at": "2026-07-05T11:59:45+00:00",
+                        "stale_after_seconds": 30,
+                        "sleepy": False,
                         "received_at": "2026-07-05T11:59:45+00:00",
                         "topic": "home/esp32-s3/status",
                         "type": "heartbeat",
@@ -123,6 +127,10 @@ class HealthMonitorTests(unittest.TestCase):
                     {
                         "device": "garage-sensor",
                         "status": "OFFLINE",
+                        "health_state": "STALE",
+                        "heartbeat_received_at": "2026-07-05T11:58:00+00:00",
+                        "stale_after_seconds": 30,
+                        "sleepy": False,
                         "received_at": "2026-07-05T11:58:00+00:00",
                         "topic": "home/garage/status",
                         "type": "heartbeat",
@@ -214,6 +222,8 @@ class HealthMonitorTests(unittest.TestCase):
 
         self.assertEqual(device["device"], "esp32-c3-climate-01")
         self.assertEqual(device["status"], "ONLINE")
+        self.assertEqual(device["health_state"], "SLEEPING")
+        self.assertEqual(device["stale_after_seconds"], 180)
         self.assertEqual(device["availability"]["state"], "offline")
         self.assertEqual(
             device["latest_status"]["fields"]["firmware_version"],
@@ -225,6 +235,151 @@ class HealthMonitorTests(unittest.TestCase):
             71.6,
         )
         self.assertTrue(device["latest_telemetry"]["fields"]["sensor_ok"])
+
+    def test_sleepy_device_uses_declared_interval_and_becomes_stale_after_three_cycles(self):
+        rows = [
+            {
+                "received_at": "2026-08-03T12:00:00+00:00",
+                "topic": "home/devices/climate-01/telemetry",
+                "device": "climate-01",
+                "type": "telemetry",
+            }
+        ]
+        detail_records = [
+            {
+                "received_at": "2026-08-03T12:00:00+00:00",
+                "topic": "home/devices/climate-01/status",
+                "payload": {"device": "climate-01", "sleepy": True, "read_interval_ms": 60000},
+            },
+            {
+                "received_at": "2026-08-03T12:00:01+00:00",
+                "topic": "home/devices/climate-01/availability",
+                "payload": {"device": "climate-01", "availability": "offline"},
+            },
+        ]
+        source = Path("data/logs/mqtt_messages.csv")
+
+        recent = build_status_report(
+            rows, datetime(2026, 8, 3, 12, 2, 30, tzinfo=timezone.utc),
+            source, detail_records=detail_records,
+        )["devices"][0]
+        overdue = build_status_report(
+            rows, datetime(2026, 8, 3, 12, 3, 1, tzinfo=timezone.utc),
+            source, detail_records=detail_records,
+        )["devices"][0]
+
+        self.assertEqual(recent["stale_after_seconds"], 180)
+        self.assertEqual(recent["status"], "ONLINE")
+        self.assertEqual(recent["health_state"], "SLEEPING")
+        self.assertEqual(overdue["status"], "OFFLINE")
+        self.assertEqual(overdue["health_state"], "STALE")
+
+    def test_availability_only_creates_device_state_without_heartbeat(self):
+        report = build_status_report(
+            [],
+            datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+            Path("data/logs/mqtt_messages.csv"),
+            detail_records=[
+                {
+                    "received_at": "2026-08-03T11:59:59+00:00",
+                    "topic": "home/devices/new-device/availability",
+                    "payload": {"device": "new-device", "availability": "online"},
+                }
+            ],
+        )
+
+        device = report["devices"][0]
+        self.assertEqual(device["device"], "new-device")
+        self.assertEqual(device["status"], "UNKNOWN")
+        self.assertEqual(device["health_state"], "ONLINE")
+        self.assertEqual(device["heartbeat_received_at"], "")
+
+    def test_historical_mismatched_details_do_not_create_ghost_device(self):
+        report = build_status_report(
+            [],
+            datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc),
+            Path("data/logs/mqtt_messages.csv"),
+            detail_records=[
+                {
+                    "received_at": "2026-08-03T11:59:59+00:00",
+                    "topic": "home/devices/climate-01/status",
+                    "payload": {"device": "ghost", "type": "status"},
+                }
+            ],
+        )
+
+        self.assertEqual(report["devices"], [])
+
+    def test_combined_health_distinguishes_normal_offline_from_sleep(self):
+        now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+        base = {
+            "device": "always-on-01",
+            "status": "ONLINE",
+            "received_at": "2026-08-03T11:59:50+00:00",
+            "type": "status",
+        }
+
+        for availability, expected in (
+            ("online", "HEALTHY"),
+            ("offline", "OFFLINE"),
+            (None, "RECENT"),
+        ):
+            report = dict(base)
+            if availability is not None:
+                report["availability"] = {"state": availability}
+            projected = health_monitor.project_device_state(report, now)
+            self.assertEqual(projected["health_state"], expected)
+            self.assertEqual(projected["status"], "ONLINE")
+            self.assertEqual(projected["stale_after_seconds"], 30)
+
+        stale = health_monitor.project_device_state(
+            {**base, "received_at": "2026-08-03T11:59:00+00:00"}, now
+        )
+        self.assertEqual(stale["health_state"], "STALE")
+        self.assertEqual(stale["status"], "OFFLINE")
+
+    def test_sleepy_interval_requires_valid_positive_integer_and_is_capped(self):
+        now = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
+        base = {
+            "device": "climate-01",
+            "status": "ONLINE",
+            "received_at": "2026-08-03T11:59:50+00:00",
+        }
+        for interval, expected in ((True, 30), ("60000", 30), (0, 30), (3600000, 3600)):
+            report = {
+                **base,
+                "latest_status": {
+                    "received_at": base["received_at"],
+                    "fields": {"sleepy": True, "read_interval_ms": interval},
+                },
+            }
+            projected = health_monitor.project_device_state(report, now)
+            self.assertEqual(projected["stale_after_seconds"], expected)
+
+        soil_sensor = {
+            **base,
+            "latest_status": {
+                "received_at": base["received_at"],
+                "fields": {"sleepy": True, "sleep_interval_seconds": 300},
+            },
+        }
+        self.assertEqual(
+            health_monitor.project_device_state(soil_sensor, now)["stale_after_seconds"],
+            900,
+        )
+        soil_sensor["availability"] = {"state": "online"}
+        self.assertEqual(
+            health_monitor.project_device_state(
+                soil_sensor, datetime(2026, 8, 3, 12, 8, tzinfo=timezone.utc)
+            )["health_state"],
+            "SLEEPING",
+        )
+        self.assertEqual(
+            health_monitor.project_device_state(
+                soil_sensor, datetime(2026, 8, 3, 12, 16, tzinfo=timezone.utc)
+            )["health_state"],
+            "STALE",
+        )
 
     def test_write_status_report_creates_parent_folder(self):
         with tempfile.TemporaryDirectory() as temp_dir:

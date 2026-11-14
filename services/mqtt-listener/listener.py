@@ -11,9 +11,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from config.device_contract import (
+    is_device_namespace_topic,
+    parse_device_topic,
+    validate_device_payload,
+)
 from config.platform import (
     DEVICE_AVAILABILITY_VALUES,
-    DEVICE_TOPIC_ROOT,
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
     MQTT_CSV_COLUMNS,
@@ -30,7 +34,6 @@ LOG_PATH = MQTT_LOG_PATH
 JSONL_PATH = MQTT_JSONL_PATH
 CSV_PATH = MQTT_CSV_PATH
 CSV_COLUMNS = MQTT_CSV_COLUMNS
-DEVICE_TOPIC_ROOT_PARTS = DEVICE_TOPIC_ROOT.split("/")
 AVAILABILITY_VALUES = {value.lower() for value in DEVICE_AVAILABILITY_VALUES}
 
 
@@ -46,37 +49,22 @@ def decode_payload(payload: bytes | str) -> str:
     return str(payload)
 
 
-def parse_json_payload(payload_text: str) -> Any | None:
-    """Return parsed JSON when payload_text is valid JSON, otherwise None."""
+def decode_json_payload(payload_text: str) -> tuple[bool, Any]:
+    """Distinguish a valid JSON null from malformed JSON."""
     try:
-        return json.loads(payload_text)
+        return True, json.loads(payload_text)
     except json.JSONDecodeError:
-        return None
+        return False, None
+
+
+def parse_json_payload(payload_text: str) -> Any | None:
+    """Compatibility helper; JSON null and malformed JSON both return None."""
+    return decode_json_payload(payload_text)[1]
 
 
 def compact_json(value: Any) -> str:
     """Render JSON without extra whitespace for logs and terminal output."""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def parse_device_topic(topic: str) -> tuple[str, str] | None:
-    """Return device ID and message type for the preferred device topic shape."""
-    parts = topic.split("/")
-    expected_length = len(DEVICE_TOPIC_ROOT_PARTS) + 2
-
-    if len(parts) != expected_length:
-        return None
-
-    if parts[: len(DEVICE_TOPIC_ROOT_PARTS)] != DEVICE_TOPIC_ROOT_PARTS:
-        return None
-
-    device_id = parts[-2].strip()
-    message_type = parts[-1].strip()
-
-    if not device_id or not message_type:
-        return None
-
-    return device_id, message_type
 
 
 def availability_payload_object(topic: str, payload_text: str) -> dict[str, str] | None:
@@ -116,15 +104,21 @@ def format_log_line(timestamp: datetime, topic: str, payload: bytes | str) -> st
     )
 
 
-def format_jsonl_record(timestamp: datetime, topic: str, payload_object: Any) -> str:
+def format_jsonl_record(
+    timestamp: datetime,
+    topic: str,
+    payload_object: Any,
+    validation_error: str | None = None,
+) -> str:
     """Build one JSON Lines record for a valid JSON MQTT payload."""
-    return compact_json(
-        {
-            "received_at": timestamp.isoformat(timespec="seconds"),
-            "topic": topic,
-            "payload": payload_object,
-        }
-    )
+    record = {
+        "received_at": timestamp.isoformat(timespec="seconds"),
+        "topic": topic,
+        "payload": payload_object,
+    }
+    if validation_error is not None:
+        record["validation_error"] = validation_error
+    return compact_json(record)
 
 
 def format_csv_row(timestamp: datetime, topic: str, payload_object: Any) -> dict[str, Any]:
@@ -135,7 +129,7 @@ def format_csv_row(timestamp: datetime, topic: str, payload_object: Any) -> dict
         "received_at": timestamp.isoformat(timespec="seconds"),
         "topic": topic,
         "device": payload.get("device", ""),
-        "type": payload.get("type", ""),
+        "type": payload.get("type") or (parse_device_topic(topic) or ("", ""))[1],
         "count": payload.get("count", ""),
         "uptime_ms": payload.get("uptime_ms", ""),
         "wifi_rssi": payload.get("wifi_rssi", ""),
@@ -179,21 +173,29 @@ def handle_message(
     """Print and persist one MQTT message received by paho-mqtt."""
     received_at = clock()
     payload_text = decode_payload(message.payload)
-    parsed_payload = parse_json_payload(payload_text)
+    is_valid_json, parsed_payload = decode_json_payload(payload_text)
     line = format_log_line(received_at, message.topic, payload_text)
 
     print(line, flush=True)
     append_log_line(log_path, line)
 
-    if parsed_payload is not None:
+    if is_valid_json:
+        validation_error = validate_device_payload(message.topic, parsed_payload)
         append_jsonl_record(
             jsonl_path,
-            format_jsonl_record(received_at, message.topic, parsed_payload),
+            format_jsonl_record(
+                received_at, message.topic, parsed_payload, validation_error
+            ),
         )
-        append_csv_row(
-            csv_path,
-            format_csv_row(received_at, message.topic, parsed_payload),
-        )
+        parsed_topic = parse_device_topic(message.topic)
+        if validation_error is None and parsed_payload is not None and (
+            not is_device_namespace_topic(message.topic)
+            or (parsed_topic is not None and parsed_topic[1] in {"status", "telemetry"})
+        ):
+            append_csv_row(
+                csv_path,
+                format_csv_row(received_at, message.topic, parsed_payload),
+            )
         return
 
     availability_payload = availability_payload_object(message.topic, payload_text)

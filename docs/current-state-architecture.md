@@ -1,10 +1,10 @@
-# Current-State Architecture Inventory
+# Historical Architecture Inventory (2026-07-25)
 
 Inspection date: 2026-07-25  
 Repository root inspected: `C:\Users\zjose\Documents\RaspberryPi\raspberry-pi-learning`  
 Inspection mode: documentation and read-only inspection only. No implementation, service, configuration, package, or runtime behavior changes were intentionally made for this inventory.
 
-This document describes the system that exists in the repository and the local workspace at inspection time. Live Raspberry Pi systemd and Mosquitto state could not be verified from this Windows workspace; those sections are marked unresolved and include read-only commands to run directly on the Raspberry Pi.
+This document describes the system as it existed in the repository and local workspace at inspection time. It is a historical pre-migration baseline, not a guide to the current deployment. Live Raspberry Pi systemd and Mosquitto state could not be verified during that inventory; those sections are marked unresolved and include the read-only commands proposed at the time.
 
 Post-migration note: this remains the historical baseline inventory from 2026-07-25. For the current service layout, onboarding contract, and new-chat handoff, see `docs/service-layout.md`, `docs/device-onboarding.md`, and `docs/chat-handoff.md`.
 

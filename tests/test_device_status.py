@@ -164,6 +164,35 @@ class DeviceStatusTests(unittest.TestCase):
         self.assertEqual(reports[0]["uptime_ms"], "")
         self.assertEqual(reports[0]["wifi_rssi"], "")
 
+    def test_canonical_commands_and_mismatched_rows_do_not_update_health(self):
+        now = datetime(2026, 8, 3, 12, 2, tzinfo=timezone.utc)
+        rows = [
+            {
+                "received_at": "2026-08-03T12:00:00+00:00",
+                "topic": "home/devices/climate-01/status",
+                "device": "climate-01",
+                "type": "status",
+            },
+            {
+                "received_at": "2026-08-03T12:01:59+00:00",
+                "topic": "home/devices/climate-01/commands",
+                "device": "climate-01",
+                "type": "commands",
+            },
+            {
+                "received_at": "2026-08-03T12:02:00+00:00",
+                "topic": "home/devices/other/status",
+                "device": "climate-01",
+                "type": "status",
+            },
+        ]
+
+        reports = build_device_reports(rows, now)
+
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["received_at"], "2026-08-03T12:00:00+00:00")
+        self.assertEqual(reports[0]["status"], "OFFLINE")
+
     def test_print_health_report_outputs_simple_table(self):
         reports = [
             {

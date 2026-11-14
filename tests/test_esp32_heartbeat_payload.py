@@ -14,8 +14,29 @@ SECRETS_EXAMPLE = PROJECT_ROOT / "include" / "secrets.example.h"
 class Esp32SensorNodeFoundationTests(unittest.TestCase):
     def setUp(self):
         self.source = MAIN_CPP.read_text(encoding="utf-8")
+        self.readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
         self.platformio = PLATFORMIO_INI.read_text(encoding="utf-8")
         self.gitignore = GITIGNORE.read_text(encoding="utf-8")
+
+    def test_firmware_version_matches_readme(self):
+        source_version = re.search(
+            r'const char \*FIRMWARE_VERSION = "([^"]+)";', self.source
+        )
+        readme_version = re.search(r'- Firmware version: `([^`]+)`', self.readme)
+
+        self.assertIsNotNone(source_version)
+        self.assertIsNotNone(readme_version)
+        self.assertEqual(readme_version.group(1), source_version.group(1))
+
+        payload_versions = [
+            json.loads(block)["firmware_version"]
+            for block in re.findall(r'```json\s*\n(.*?)\n```', self.readme, re.DOTALL)
+            if '"firmware_version"' in block
+        ]
+        self.assertTrue(payload_versions, "README has no firmware payload example")
+        self.assertTrue(
+            all(version == source_version.group(1) for version in payload_versions)
+        )
 
     def test_device_identity_and_topics_target_esp32_c3_foundation(self):
         self.assertIn('const char *DEVICE_ID = "esp32-c3-test";', self.source)

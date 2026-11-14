@@ -1,8 +1,8 @@
 # Device Onboarding Contract
 
-This document defines how new MQTT devices should publish to the Raspberry Pi IoT platform today. It is a contract for the current platform shape, not a new feature implementation.
+This document defines how new MQTT devices publish to the current Raspberry Pi IoT platform.
 
-The platform is ready for additional basic MQTT devices now if they follow this contract. New devices will be logged, included in structured JSONL/CSV logs, processed by the health monitor, and shown in the current dashboard health table. Rich per-device dashboard cards, schemas, registries, and long-term database storage are future stages.
+The platform is ready for additional MQTT devices that follow this contract. Messages are logged in JSONL, while validated status and telemetry update the CSV-backed health snapshot and dashboard. Per-device schemas, registries, and long-term database storage are future stages.
 
 ## Current Platform Behavior
 
@@ -23,11 +23,12 @@ For every received MQTT message:
 - The payload is decoded as UTF-8 with replacement for invalid bytes.
 - A human-readable line is printed and appended to `data/logs/mqtt_messages.log`.
 - If the payload is valid JSON, the full payload is appended to `data/logs/mqtt_messages.jsonl`.
-- If the payload is valid JSON, one fixed-column CSV row is appended to `data/logs/mqtt_messages.csv`.
+- Valid canonical `status` and `telemetry` JSON objects produce fixed-column CSV rows in `data/logs/mqtt_messages.csv`. Canonical `commands`, `responses`, and `availability` do not refresh heartbeat state.
+- Canonical JSON with a malformed topic, mismatched `device` or `type`, or missing command/response fields remains in JSONL with a `validation_error` but does not update CSV-backed device state.
 - If the payload is retained plain-text `online` or `offline` on `home/devices/<device-id>/availability`, it is also normalized into `data/logs/mqtt_messages.jsonl` as a structured availability event.
 - Other non-JSON payloads are kept in the text log only.
 
-The health monitor reads `data/logs/mqtt_messages.csv`, groups rows by the JSON `device` field, enriches those rows with latest status/telemetry/availability details from JSONL and availability logs, and writes `data/status/device_status.json`.
+The health monitor reads the CSV, JSONL, and legacy availability text log, validates canonical history again, and writes a derived device-state snapshot to `data/status/device_status.json`. Archived MQTT payloads are not modified by this projection.
 
 The dashboard reads `data/status/device_status.json`, displays the fixed health/status summary columns, and provides expandable device details for latest status, telemetry, and availability fields.
 
@@ -52,7 +53,7 @@ basement-humidity-01
 water-softener-01
 ```
 
-The JSON payload `device` value should match the `<device-id>` segment in the MQTT topic. The current Pi code does not enforce this yet, but future validation may.
+For canonical topics, the JSON payload `device` must match the `<device-id>` segment. The listener and health monitor enforce this. Older noncanonical topics under `home/#` remain accepted for compatibility.
 
 ## Topic Contract
 
@@ -62,7 +63,7 @@ New devices should use this topic shape:
 home/devices/<device-id>/<message-type>
 ```
 
-Recommended message types:
+Supported canonical message types:
 
 | Message type | Topic | Payload shape | Notes |
 | --- | --- | --- | --- |
@@ -72,17 +73,22 @@ Recommended message types:
 | `commands` | `home/devices/<device-id>/commands` | JSON object | Commands sent to the device. |
 | `responses` | `home/devices/<device-id>/responses` | JSON object | Command acknowledgements or errors from the device. |
 
-The current listener parses this topic shape for retained availability events. Health grouping still relies on the JSON `device` field from status and telemetry payloads.
+The listener parses this topic shape for all five message types. The topic supplies the message type when `type` is omitted from a status or telemetry payload.
 
 ## JSON Payload Contract
 
 Messages intended for structured logging and the dashboard should use valid UTF-8 JSON objects.
 
-Required field:
+Minimum JSON fields for canonical topics:
 
-| Field | Type | Purpose |
+| Topic | Required fields | Notes |
 | --- | --- | --- |
-| `device` | string | Stable device identifier used by the health monitor. |
+| `status` | `device` (string) | Runtime fields such as `sleepy`, `read_interval_ms`, and `sleep_interval_seconds` are optional. |
+| `telemetry` | `device` (string) | Measurements are device-specific; no universal measurement field is required. |
+| `commands` | `command` (nonempty string) | `device` may be omitted, but must match the topic if present. |
+| `responses` | `device` (string), `command` (nonempty string), `success` (boolean) | The device ID must match the topic. |
+
+For these JSON topics, an optional `type` field must match the topic suffix. `availability` normally uses retained plain-text `online` or `offline`, not JSON.
 
 Currently recognized health/dashboard fields:
 
@@ -94,7 +100,7 @@ Currently recognized health/dashboard fields:
 | `uptime_ms` | integer | Optional device uptime in milliseconds. |
 | `wifi_rssi` | integer | Optional Wi-Fi signal strength in dBm. |
 
-Missing fields are handled gracefully and written as blank values in CSV/dashboard output.
+Missing optional fields are written as blank values in CSV/dashboard output. Missing required fields on canonical topics are archived with a validation error and excluded from device state.
 
 Additional fields are allowed. They are preserved in `data/logs/mqtt_messages.jsonl` and shown in expandable dashboard details for latest status and telemetry payloads.
 
@@ -114,7 +120,7 @@ Example:
 {"device":"garage-temp-01","type":"status","count":1,"uptime_ms":1000,"wifi_rssi":-50}
 ```
 
-For the current health monitor, heartbeat freshness is `ONLINE` when a device's latest valid CSV-backed JSON message was received within 30 seconds. The dashboard renders that as `FRESH`; otherwise it renders as `STALE`. To stay fresh, a device should publish a valid JSON status or telemetry message at least every 30 seconds. A 10-15 second interval is a good current default for always-online devices.
+By default, heartbeat freshness is `ONLINE` when the latest valid status or telemetry was received within 30 seconds. The dashboard renders this as `FRESH` or `STALE`. A 10-15 second interval remains a good default for always-online devices. For a sleepy device, include `sleepy:true` and a positive integer `read_interval_ms` or `sleep_interval_seconds` in status. `read_interval_ms` takes precedence when both are present. The freshness window then becomes three declared intervals, with a 30-second floor and a one-hour cap. A 60-second cycle remains fresh for 180 seconds; a five-minute cycle remains fresh for 15 minutes.
 
 ## Telemetry Messages
 
@@ -157,7 +163,21 @@ offline
 
 Availability messages should be retained. Devices that support MQTT Last Will should configure the broker to publish retained `offline` to the availability topic if the device disconnects unexpectedly, then publish retained `online` after MQTT reconnects.
 
-Plain-text availability messages are shown separately from heartbeat freshness. They are logged to `data/logs/mqtt_messages.log`, normalized into JSONL for dashboard details, and intentionally kept out of CSV so retained `offline` does not make a sleepy device look like it stopped sending data for the wrong reason.
+Plain-text availability messages are logged to `data/logs/mqtt_messages.log`, normalized into JSONL, and treated as device state. They remain outside CSV so a retained `offline` does not refresh heartbeat freshness.
+
+The dashboard shows a combined health label alongside heartbeat freshness and availability:
+
+| Health | Meaning |
+| --- | --- |
+| `HEALTHY` | Recent heartbeat and availability `online` from a non-sleepy device. |
+| `SLEEPING` | Recent heartbeat from a declared sleepy device, regardless of retained availability. |
+| `OFFLINE` | Availability `offline` without a recent sleepy heartbeat. |
+| `STALE` | Heartbeat missed its freshness window, without a definitive non-sleepy `offline`. |
+| `RECENT` | Recent heartbeat with unknown availability. |
+| `ONLINE` | Availability `online` but no heartbeat has been observed. |
+| `UNKNOWN` | Neither heartbeat nor availability is known. |
+
+A sleepy device that misses three cycles changes from `SLEEPING` to `STALE`; an expected clean disconnect alone does not mean failure. Availability remains visible separately, since some sleepy devices retain `online` while asleep.
 
 ## Commands and Responses
 
@@ -193,7 +213,7 @@ Responses should include the device ID, command name, and success state:
 {"device":"esp32-c3-test","command":"set_interval","success":false,"error":"interval_out_of_range"}
 ```
 
-The Raspberry Pi listener currently logs commands and responses. It does not route commands, enforce schemas, or manage device capabilities.
+The Raspberry Pi listener logs commands and responses but does not route them or manage capabilities. It validates the minimum canonical fields above and never uses command/response traffic as a heartbeat.
 
 ## Onboarding Checklist
 
@@ -202,7 +222,7 @@ Use this checklist when adding a new device:
 1. Choose a stable lowercase hyphenated device ID.
 2. Publish under `home/devices/<device-id>/...`.
 3. Include `device` in every JSON payload that should appear in health reports.
-4. Publish a valid JSON `status` or `telemetry` message at least every 30 seconds if the dashboard should show the device as `ONLINE`.
+4. Publish valid JSON `status` or `telemetry` at least every 30 seconds for default freshness, or declare `sleepy:true` with `read_interval_ms` or `sleep_interval_seconds` in status for a longer cycle.
 5. Use retained `online` and MQTT Last Will `offline` on the availability topic when supported by the device firmware.
 6. Keep command handling optional until the device needs bidirectional control.
 7. Verify text log, JSONL log, CSV log, health monitor output, and dashboard display.
@@ -257,7 +277,7 @@ This contract does not add:
 - Per-device display rules.
 - Database storage.
 - MQTT authentication.
-- Schema validation.
+- Per-device telemetry schemas and measurement validation.
 - Automatic device provisioning.
 - Fleet management.
 - Rich telemetry visualizations.

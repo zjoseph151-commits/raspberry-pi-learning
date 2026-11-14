@@ -13,12 +13,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from config.device_contract import (
+    is_device_namespace_topic,
+    parse_device_topic,
+    validate_device_payload,
+)
 from config.platform import (
     DEVICE_AVAILABILITY_VALUES,
     DEVICE_STATUS_PATH,
-    DEVICE_TOPIC_ROOT,
+    MAX_SLEEPY_STALE_AFTER_SECONDS,
     MQTT_JSONL_PATH,
     MQTT_LOG_PATH,
+    ONLINE_THRESHOLD_SECONDS,
+    SLEEPY_STALE_AFTER_INTERVALS,
 )
 
 
@@ -41,28 +48,7 @@ STATUS_JSON_PATH = DEVICE_STATUS_PATH
 CSV_PATH = device_status.CSV_PATH
 JSONL_PATH = MQTT_JSONL_PATH
 LOG_PATH = MQTT_LOG_PATH
-DEVICE_TOPIC_ROOT_PARTS = DEVICE_TOPIC_ROOT.split("/")
 AVAILABILITY_VALUES = {value.lower() for value in DEVICE_AVAILABILITY_VALUES}
-
-
-def parse_device_topic(topic: str) -> tuple[str, str] | None:
-    """Return device ID and message type for `home/devices/<device>/<type>`."""
-    parts = topic.split("/")
-    expected_length = len(DEVICE_TOPIC_ROOT_PARTS) + 2
-
-    if len(parts) != expected_length:
-        return None
-
-    if parts[: len(DEVICE_TOPIC_ROOT_PARTS)] != DEVICE_TOPIC_ROOT_PARTS:
-        return None
-
-    device_id = parts[-2].strip()
-    message_type = parts[-1].strip()
-
-    if not device_id or not message_type:
-        return None
-
-    return device_id, message_type
 
 
 def read_jsonl_records(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -144,11 +130,17 @@ def read_availability_log_records(log_path: Path) -> list[dict[str, Any]]:
 
 
 def event_device_and_type(record: dict[str, Any]) -> tuple[str, str]:
-    """Resolve device ID and event type from payload first, then topic."""
+    """Use validated canonical topics, with a legacy payload fallback."""
     topic = str(record.get("topic", ""))
     payload = record.get("payload")
     payload_object = payload if isinstance(payload, dict) else {}
+    if record.get("validation_error") or validate_device_payload(topic, payload) is not None:
+        return "", ""
+
     parsed_topic = parse_device_topic(topic)
+    if is_device_namespace_topic(topic):
+        return parsed_topic or ("", "")
+
     topic_device, topic_type = parsed_topic or ("", "")
 
     device_id = str(payload_object.get("device") or topic_device).strip()
@@ -279,6 +271,81 @@ def merge_device_details(
     return [merged[device_id] for device_id in sorted(merged)]
 
 
+def project_device_state(report: dict[str, Any], generated_at: datetime) -> dict[str, Any]:
+    """Derive current device health without modifying archived MQTT events."""
+    projected = dict(report)
+    latest_status = projected.get("latest_status")
+    status_fields = latest_status.get("fields") if isinstance(latest_status, dict) else None
+    status_fields = status_fields if isinstance(status_fields, dict) else {}
+    sleepy = status_fields.get("sleepy") is True
+    read_interval_ms = status_fields.get("read_interval_ms")
+    sleep_interval_seconds = status_fields.get("sleep_interval_seconds")
+    if not (
+        isinstance(read_interval_ms, int)
+        and not isinstance(read_interval_ms, bool)
+        and read_interval_ms > 0
+    ):
+        read_interval_ms = (
+            sleep_interval_seconds * 1000
+            if isinstance(sleep_interval_seconds, int)
+            and not isinstance(sleep_interval_seconds, bool)
+            and sleep_interval_seconds > 0
+            else None
+        )
+    stale_after_seconds = ONLINE_THRESHOLD_SECONDS
+    if sleepy and read_interval_ms is not None:
+        stale_after_seconds = min(
+            MAX_SLEEPY_STALE_AFTER_SECONDS,
+            max(
+                ONLINE_THRESHOLD_SECONDS,
+                (read_interval_ms * SLEEPY_STALE_AFTER_INTERVALS + 999) // 1000,
+            ),
+        )
+
+    heartbeat_times = []
+    if projected.get("status") != "UNKNOWN":
+        parsed = device_status.parse_received_at(str(projected.get("received_at", "")))
+        if parsed is not None:
+            heartbeat_times.append(parsed)
+    for key in ("latest_status", "latest_telemetry"):
+        event = projected.get(key)
+        if isinstance(event, dict):
+            parsed = device_status.parse_received_at(str(event.get("received_at", "")))
+            if parsed is not None:
+                heartbeat_times.append(parsed)
+
+    heartbeat_at = max(heartbeat_times) if heartbeat_times else None
+    availability = projected.get("availability")
+    availability_value = availability.get("state") if isinstance(availability, dict) else None
+    availability_value = str(availability_value or "unknown").lower()
+    if availability_value not in AVAILABILITY_VALUES:
+        availability_value = "unknown"
+
+    if heartbeat_at is None:
+        projected["status"] = "UNKNOWN"
+        health_state = availability_value.upper()
+    else:
+        age_seconds = max(0, (generated_at - heartbeat_at).total_seconds())
+        fresh = age_seconds <= stale_after_seconds
+        projected["status"] = "ONLINE" if fresh else "OFFLINE"
+        if not fresh:
+            health_state = "OFFLINE" if availability_value == "offline" and not sleepy else "STALE"
+        elif sleepy:
+            health_state = "SLEEPING"
+        elif availability_value == "offline":
+            health_state = "OFFLINE"
+        elif availability_value == "online":
+            health_state = "HEALTHY"
+        else:
+            health_state = "RECENT"
+
+    projected["health_state"] = health_state
+    projected["heartbeat_received_at"] = heartbeat_at.isoformat() if heartbeat_at else ""
+    projected["stale_after_seconds"] = stale_after_seconds
+    projected["sleepy"] = sleepy
+    return projected
+
+
 def build_status_report(
     rows: Iterable[dict[str, str]],
     generated_at: datetime,
@@ -290,6 +357,7 @@ def build_status_report(
     reports = device_status.build_device_reports(rows, generated_at)
     if detail_records is not None:
         reports = merge_device_details(reports, latest_detail_records(detail_records))
+    reports = [project_device_state(report, generated_at) for report in reports]
 
     report: dict[str, object] = {
         "generated_at": generated_at.isoformat(timespec="seconds"),

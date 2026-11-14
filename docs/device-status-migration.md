@@ -2,6 +2,8 @@
 
 This stage makes the migrated health monitor self-contained by copying its `device_status.py` helper into the health-monitor service directory.
 
+Historical path note: commands below use the `logs/` layout from this migration stage. Current runtime files are under `data/logs/` and `data/status/`; see `docs/runtime-data-migration.md`. Do not rerun these stage-specific commands against the current deployment.
+
 ## Scope
 
 Only the health/status helper used by the health monitor is copied during this stage.

@@ -317,6 +317,116 @@ class MqttListenerTests(unittest.TestCase):
             )
             self.assertFalse(csv_path.exists())
 
+    def test_canonical_mismatch_is_archived_but_does_not_update_csv(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "mqtt.log"
+            jsonl_path = Path(temp_dir) / "mqtt.jsonl"
+            csv_path = Path(temp_dir) / "mqtt.csv"
+            message = FakeMessage(
+                "home/devices/climate-01/status",
+                b'{"device":"other","type":"status"}',
+            )
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    message,
+                    log_path,
+                    lambda: datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertEqual(record["validation_error"], "device_mismatch")
+            self.assertEqual(record["payload"]["device"], "other")
+            self.assertTrue(log_path.exists())
+            self.assertFalse(csv_path.exists())
+
+    def test_canonical_json_null_is_archived_as_invalid_object(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "mqtt.log"
+            jsonl_path = Path(temp_dir) / "mqtt.jsonl"
+            csv_path = Path(temp_dir) / "mqtt.csv"
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    FakeMessage("home/devices/climate-01/status", b"null"),
+                    log_path,
+                    lambda: datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertIsNone(record["payload"])
+            self.assertEqual(record["validation_error"], "payload_not_object")
+            self.assertFalse(csv_path.exists())
+
+    def test_legacy_json_null_is_archived_without_heartbeat(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "mqtt.log"
+            jsonl_path = Path(temp_dir) / "mqtt.jsonl"
+            csv_path = Path(temp_dir) / "mqtt.csv"
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    FakeMessage("home/legacy/status", b"null"),
+                    log_path,
+                    lambda: datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+            self.assertIsNone(record["payload"])
+            self.assertNotIn("validation_error", record)
+            self.assertFalse(csv_path.exists())
+
+    def test_canonical_commands_and_responses_do_not_refresh_heartbeat(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "mqtt.log"
+            jsonl_path = Path(temp_dir) / "mqtt.jsonl"
+            csv_path = Path(temp_dir) / "mqtt.csv"
+            timestamp = lambda: datetime(2026, 8, 3, tzinfo=timezone.utc)
+            messages = (
+                FakeMessage("home/devices/climate-01/commands", b'{"command":"read_now"}'),
+                FakeMessage(
+                    "home/devices/climate-01/responses",
+                    b'{"device":"climate-01","command":"read_now","success":true}',
+                ),
+            )
+
+            with redirect_stdout(io.StringIO()):
+                for message in messages:
+                    handle_message(
+                        message, log_path, timestamp,
+                        jsonl_path=jsonl_path, csv_path=csv_path,
+                    )
+
+            records = [json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(records), 2)
+            self.assertTrue(all("validation_error" not in record for record in records))
+            self.assertFalse(csv_path.exists())
+
+    def test_canonical_status_uses_topic_type_when_payload_omits_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "mqtt.log"
+            jsonl_path = Path(temp_dir) / "mqtt.jsonl"
+            csv_path = Path(temp_dir) / "mqtt.csv"
+
+            with redirect_stdout(io.StringIO()):
+                handle_message(
+                    FakeMessage("home/devices/climate-01/status", b'{"device":"climate-01"}'),
+                    log_path,
+                    lambda: datetime(2026, 8, 3, tzinfo=timezone.utc),
+                    jsonl_path=jsonl_path,
+                    csv_path=csv_path,
+                )
+
+            with csv_path.open(newline="", encoding="utf-8") as csv_file:
+                rows = list(csv.DictReader(csv_file))
+            self.assertEqual(rows[0]["type"], "status")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -94,9 +94,9 @@ Recommended topic shape:
 home/devices/<device-id>/<message-type>
 ```
 
-The listener still subscribes to `home/#`, and health grouping still depends on the JSON `device` field rather than parsing the topic path.
+The listener still subscribes to `home/#`. Canonical `home/devices/<device-id>/<message-type>` topics are parsed and validated against the JSON `device`; invalid records stay in raw JSONL but do not update device state. Legacy topics remain supported.
 
-The current dashboard is still generic, but it now has expandable rows. The summary table keeps the fixed CSV/report fields, while detail panels show latest status, telemetry, and retained availability fields from JSONL and availability logs. Heartbeat freshness is displayed separately from retained availability.
+The dashboard summary now shows combined health, heartbeat freshness, and retained availability. Detail panels show latest status, telemetry, and availability fields. The health monitor writes a derived snapshot under `data/status/` without changing archived MQTT events. Declared sleepy devices use a three-interval freshness window.
 
 ## Data Flow
 
@@ -108,6 +108,8 @@ flowchart LR
     Listener --> JsonlLog["data/logs/mqtt_messages.jsonl"]
     Listener --> CsvLog["data/logs/mqtt_messages.csv"]
     CsvLog --> Health["Health monitor<br/>services/health-monitor/health_monitor.py"]
+    JsonlLog --> Health
+    TextLog --> Health
     Health --> StatusJson["data/status/device_status.json"]
     StatusJson --> Dashboard["Dashboard<br/>services/dashboard/dashboard_server.py"]
     Dashboard --> Browser["Browser<br/>http://localhost:8080"]

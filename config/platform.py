@@ -7,9 +7,8 @@ MQTT_BROKER_HOST = "localhost"
 MQTT_BROKER_PORT = 1883
 MQTT_TOPIC_FILTER = "home/#"
 
-# Device onboarding contract. The listener still subscribes to `home/#`; these
-# constants describe the preferred topic structure for new device firmware and
-# future platform features.
+# Device onboarding contract. The listener still subscribes to `home/#`;
+# canonical device topics are parsed and validated before updating state.
 DEVICE_TOPIC_ROOT = "home/devices"
 DEVICE_TOPIC_TEMPLATE = f"{DEVICE_TOPIC_ROOT}/{{device_id}}/{{message_type}}"
 DEVICE_TOPIC_SUFFIXES = [
@@ -32,8 +31,7 @@ MQTT_CSV_PATH = Path("data/logs/mqtt_messages.csv")
 DEVICE_STATUS_PATH = Path("data/status/device_status.json")
 
 # Structured JSON/CSV fields used by the listener, health monitor, and
-# dashboard. `device` is the only required JSON field for onboarding into the
-# current health view; the other fields are captured when present.
+# dashboard. Status and telemetry require `device`; commands may omit it.
 DEVICE_REQUIRED_JSON_FIELDS = [
     "device",
 ]
@@ -58,6 +56,8 @@ DEVICE_REPORT_COLUMNS = [
 
 # Device health behavior.
 ONLINE_THRESHOLD_SECONDS = 30
+SLEEPY_STALE_AFTER_INTERVALS = 3
+MAX_SLEEPY_STALE_AFTER_SECONDS = 3600
 
 # Local dashboard binding.
 DASHBOARD_HOST = "0.0.0.0"

@@ -319,7 +319,7 @@ The listener connects to the local MQTT broker at `localhost:1883`, subscribes t
 data/logs/mqtt_messages.log
 ```
 
-When a payload is valid JSON, the listener also writes:
+Valid JSON payloads are archived in JSONL. Valid canonical `status` and `telemetry` objects also produce CSV heartbeat rows:
 
 ```text
 data/logs/mqtt_messages.jsonl
@@ -332,7 +332,7 @@ The CSV header is created automatically when the file does not exist:
 received_at,topic,device,type,count,uptime_ms,wifi_rssi
 ```
 
-Missing JSON fields are written as blank CSV values. Raw non-JSON messages, such as retained availability payloads, are still written to the plain text log without crashing the listener.
+Missing optional JSON fields are written as blank CSV values. Canonical topic/device mismatches are archived in JSONL with a `validation_error` but do not update device state. Older noncanonical topics retain their existing logging behavior. Raw non-JSON messages are still written to the plain text log.
 
 Retained plain-text availability payloads under `home/devices/<device-id>/availability` are also normalized into `data/logs/mqtt_messages.jsonl` as structured availability events. They are intentionally not written to CSV, so availability does not override heartbeat freshness.
 
@@ -365,7 +365,7 @@ It writes the latest device status snapshot to:
 data/status/device_status.json
 ```
 
-The monitor keeps the latest CSV-backed message per `device` and marks heartbeat freshness as `ONLINE` when the latest message was received within 30 seconds. Otherwise, heartbeat freshness is `OFFLINE`. Availability is tracked separately from heartbeat freshness.
+The monitor derives device state from valid status/telemetry history and retained availability. Heartbeat freshness defaults to 30 seconds. A device declaring `sleepy:true` and either `read_interval_ms` or `sleep_interval_seconds` in status gets a freshness window of three publish intervals (30-second floor, one-hour cap); the 60-second climate cycle is fresh for 180 seconds, and the five-minute soil sensor for 15 minutes. The snapshot also includes a combined health state such as `HEALTHY`, `SLEEPING`, `OFFLINE`, or `STALE`. Raw MQTT logs remain separate from this derived snapshot.
 
 Manual run from the repository root:
 
@@ -387,6 +387,8 @@ The optional device status helper can also print a terminal table:
 /home/zack/projects/raspberry-pi/.venv/bin/python \
   services/health-monitor/device_status.py
 ```
+
+That CSV-only helper uses the default 30-second threshold; the health monitor snapshot and dashboard apply the adaptive sleepy-device policy.
 
 ### Web Dashboard
 
@@ -415,7 +417,7 @@ Open the dashboard on the Raspberry Pi at:
 http://localhost:8080
 ```
 
-From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds, shows heartbeat freshness as `FRESH` or `STALE`, shows retained availability separately as `ONLINE`, `OFFLINE`, or `UNKNOWN`, and includes expandable device details for latest status, telemetry, and availability fields.
+From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows combined health, heartbeat freshness, retained availability, and expandable device details. A declared sleepy device can show `SLEEPING` and `FRESH` with either retained availability value; the separate availability column shows what the device last reported.
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
@@ -431,7 +433,7 @@ home/devices/<device-id>/<message-type>
 
 Supported message types for the current contract are `status`, `availability`, `telemetry`, `commands`, and `responses`.
 
-The MQTT listener still subscribes to all messages under `home/#`. To appear in the health monitor and dashboard, each structured JSON payload should include at least:
+The MQTT listener still subscribes to all messages under `home/#`. On canonical status/telemetry topics, the JSON `device` must match the topic device ID. A minimal status payload is:
 
 ```json
 {"device":"example-device"}
@@ -457,6 +459,8 @@ flowchart LR
     Listener --> JsonlLog["data/logs/mqtt_messages.jsonl"]
     Listener --> CsvLog["data/logs/mqtt_messages.csv"]
     CsvLog --> Health["services/health-monitor/health_monitor.py"]
+    JsonlLog --> Health
+    TextLog --> Health
     Health --> StatusJson["data/status/device_status.json"]
     StatusJson --> Dashboard["services/dashboard/dashboard_server.py"]
     Dashboard --> Browser["http://localhost:8080"]

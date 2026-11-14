@@ -36,6 +36,7 @@ detail_key = _target.detail_key
 age_label = _target.age_label
 freshness_badge = _target.freshness_badge
 status_badge = _target.status_badge
+health_badge = _target.health_badge
 availability_badge = _target.availability_badge
 render_device_row = _target.render_device_row
 render_device_detail_row = _target.render_device_detail_row
@@ -57,6 +58,7 @@ __all__ = [
     "age_label",
     "freshness_badge",
     "status_badge",
+    "health_badge",
     "availability_badge",
     "render_device_row",
     "render_device_detail_row",

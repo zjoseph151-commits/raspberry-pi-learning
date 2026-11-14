@@ -2,6 +2,8 @@
 
 This stage continues the move from the learning-project layout to the cleaner home IoT platform layout while preserving the currently working health monitor behavior.
 
+Historical path note: commands below use the `logs/` layout from this migration stage. Current runtime files are under `data/logs/` and `data/status/`; see `docs/runtime-data-migration.md`. Do not rerun these stage-specific commands against the current deployment.
+
 ## Scope
 
 Only the health monitor service script is copied into the new service layout during this stage.

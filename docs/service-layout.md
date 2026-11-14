@@ -98,6 +98,8 @@ The listener still subscribes to `home/#`. Canonical `home/devices/<device-id>/<
 
 The dashboard summary now shows combined health, heartbeat freshness, and retained availability. Detail panels show latest status, telemetry, and availability fields. The health monitor writes a derived snapshot under `data/status/` without changing archived MQTT events. Declared sleepy devices use a three-interval freshness window.
 
+The `birdfeeder-01` detail row also exposes its four MQTT commands and temporary MJPEG stream URL. The dashboard service publishes commands and waits for a response; the listener still only archives command/response traffic. These controls are currently unauthenticated on the LAN.
+
 ## Data Flow
 
 ```mermaid

@@ -126,6 +126,7 @@ Plain-text retained availability messages are logged and projected into device s
 - The platform currently has no SQLite database, device registry, MQTT authentication, per-device telemetry schema validation, or dedicated per-device dashboard pages.
 - Canonical topics are parsed and validated; older noncanonical `home/#` topics retain legacy behavior.
 - Canonical commands and responses are archived but never refresh heartbeat state. Invalid canonical JSON is retained in JSONL with a `validation_error` and excluded from device state.
+- The dashboard can publish only the four `birdfeeder-01` commands. Those controls are currently unauthenticated on the LAN; a successful `record_now` reply means recording started, not that clip upload completed.
 - ESP32 firmware version references are currently aligned to `0.2.1`; when changing firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
 - The default `python -m unittest discover` command does not find tests from the repository root in the current layout; use `python -m unittest discover -s tests -v`.
 

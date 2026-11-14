@@ -6,6 +6,8 @@ import threading
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MIGRATED_DASHBOARD_PATH = (
@@ -108,7 +110,8 @@ class DashboardServerTests(unittest.TestCase):
         parser.feed(html)
 
         self.assertEqual(parser.title, "Pi IoT Dashboard")
-        self.assertIn('<meta http-equiv="refresh" content="10">', html)
+        self.assertIn("var refreshAfter = Date.now() + 10000", html)
+        self.assertIn('src="/assets/birdfeeder-controls.js"', html)
         self.assertIn("Generated at: 2026-07-05T12:00:00+00:00", html)
         self.assertIn("esp32-s3-sensor", html)
         self.assertIn("garage-sensor", html)
@@ -147,6 +150,200 @@ class DashboardServerTests(unittest.TestCase):
             self.assertNotIn(device_id, html)
         self.assertNotIn("old-c3", html)
         self.assertIn('data-device-details-key="esp32-c3-climate-01"', html)
+
+    def test_birdfeeder_controls_render_only_for_birdfeeder(self):
+        html = build_dashboard_html(
+            {
+                "devices": [
+                    {
+                        "device": "birdfeeder-01",
+                        "latest_status": {
+                            "fields": {"ip": "10.0.0.132", "stream_active": False}
+                        },
+                    },
+                    {"device": "climate-01"},
+                ]
+            }
+        )
+
+        for command in ("record_now", "stay_awake", "sleep_now", "stream_on"):
+            self.assertIn(
+                f'<button type="button" data-birdfeeder-command="{command}">',
+                html,
+            )
+        self.assertIn('data-stream-url="http://10.0.0.132:81/stream"', html)
+        self.assertIn("http://10.0.0.132:81/stream</code>", html)
+        self.assertEqual(html.count('class="detail-panel birdfeeder-controls"'), 1)
+
+    def test_birdfeeder_stream_url_rejects_untrusted_addresses(self):
+        valid = dashboard_server.birdfeeder_stream_url
+        self.assertEqual(
+            valid("http://10.0.0.132:81/stream"),
+            "http://10.0.0.132:81/stream",
+        )
+        for url in (
+            "javascript:alert(1)",
+            "http://example.com:81/stream",
+            "http://127.0.0.1:81/stream",
+            "http://10.0.0.132:80/stream",
+            "http://10.0.0.132:81/other",
+            "http://[bad:81/stream",
+        ):
+            self.assertEqual(valid(url), "")
+
+    def test_send_birdfeeder_command_publishes_without_retain_and_uses_response(self):
+        class FakeClient:
+            def __init__(self):
+                self.published = None
+
+            def connect(self, host, port, keepalive):
+                self.connection = (host, port, keepalive)
+
+            def loop_start(self):
+                self.on_connect(self, None, None, 0, None)
+
+            def subscribe(self, topic):
+                self.subscription = topic
+                self.on_subscribe(
+                    self, None, 1, [SimpleNamespace(is_failure=False)], None
+                )
+                return 0, 1
+
+            def publish(self, topic, payload, qos, retain):
+                self.published = (topic, json.loads(payload), qos, retain)
+                response = {
+                    "device": "birdfeeder-01",
+                    "type": "responses",
+                    "command": "stream_on",
+                    "success": True,
+                    "message": "stream_started",
+                    "stream_url": "http://10.0.0.132:81/stream",
+                }
+                self.on_message(
+                    self,
+                    None,
+                    SimpleNamespace(
+                        topic=self.subscription,
+                        payload=json.dumps(response).encode("utf-8"),
+                    ),
+                )
+                return SimpleNamespace(rc=0)
+
+            def disconnect(self):
+                pass
+
+            def loop_stop(self):
+                pass
+
+        client = FakeClient()
+        with patch("paho.mqtt.client.Client", return_value=client):
+            response = dashboard_server.send_birdfeeder_command("stream_on", 120)
+
+        self.assertEqual(client.connection, ("localhost", 1883, 15))
+        self.assertEqual(
+            client.published,
+            (
+                "home/devices/birdfeeder-01/commands",
+                {"device": "birdfeeder-01", "command": "stream_on", "duration_seconds": 120},
+                0,
+                False,
+            ),
+        )
+        self.assertEqual(response["stream_url"], "http://10.0.0.132:81/stream")
+        self.assertTrue(response["ok"])
+
+    def test_post_birdfeeder_command_validates_and_returns_acknowledgement(self):
+        calls = []
+
+        def send_command(command, duration_seconds):
+            calls.append((command, duration_seconds))
+            return {
+                "ok": True,
+                "command": command,
+                "message": "recording_started",
+                "stream_url": "",
+                "duration_seconds": 0,
+            }
+
+        handler = make_handler(Path("missing-status.json"), quiet=True, command_sender=send_command)
+        server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+
+        def request(path, payload, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", path, body=json.dumps(payload),
+                headers={"Content-Type": "application/json", **(headers or {})},
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            return response.status, body
+
+        try:
+            path = dashboard_server.BIRDFEEDER_COMMAND_PATH
+            status, body = request(path, {"command": "record_now"})
+            self.assertEqual(status, 200)
+            self.assertEqual(body["message"], "recording_started")
+            self.assertEqual(calls, [("record_now", None)])
+
+            status, _ = request(path, {"command": "stream_on", "duration_seconds": 180})
+            self.assertEqual(status, 200)
+            self.assertEqual(calls[-1], ("stream_on", 180))
+
+            for invalid in (
+                {"command": "reboot"},
+                {"command": []},
+                {"command": "stream_on", "duration_seconds": 181},
+                {"command": "sleep_now", "duration_seconds": 60},
+            ):
+                status, _ = request(path, invalid)
+                self.assertEqual(status, 400)
+            status, _ = request(
+                path, {"command": "record_now"}, {"Origin": "http://evil.example"}
+            )
+            self.assertEqual(status, 403)
+            status, _ = request("/api/devices/other/commands", {"command": "record_now"})
+            self.assertEqual(status, 404)
+            self.assertEqual(len(calls), 2)
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/assets/birdfeeder-controls.js")
+            response = connection.getresponse()
+            script = response.read().decode("utf-8")
+            connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn("data-birdfeeder-controls", script)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_post_birdfeeder_timeout_is_reported_without_mqtt(self):
+        def timeout(command, duration_seconds):
+            raise TimeoutError("No acknowledgement; the command may have run")
+
+        handler = make_handler(Path("missing-status.json"), quiet=True, command_sender=timeout)
+        server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", dashboard_server.BIRDFEEDER_COMMAND_PATH,
+                body='{"command":"record_now"}',
+                headers={"Content-Type": "application/json"},
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            self.assertEqual(response.status, 504)
+            self.assertIn("may have run", body["message"])
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
     def test_build_dashboard_html_shows_empty_state_when_only_hidden_devices_exist(self):
         html = build_dashboard_html({"devices": [{"device": "migration-test"}]})

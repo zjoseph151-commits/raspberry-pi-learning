@@ -70,7 +70,10 @@ class DashboardServerTests(unittest.TestCase):
             Path("missing-status.json"),
             quiet=True,
             command_sender=lambda command, duration: calls.append(command),
-            service_status_loader=lambda: {"units": []},
+            service_status_loader=lambda: {"units": [{
+                "name": "MQTT broker", "unit": "mosquitto.service", "state": "Active"
+            }]},
+            service_action_runner=lambda unit, action: calls.append((unit, action)),
         )
 
         class RemoteHandler(handler):
@@ -88,6 +91,10 @@ class DashboardServerTests(unittest.TestCase):
             connection.close()
             self.assertEqual(response.status, 200)
             self.assertIn("Read-only connection", html)
+            self.assertIn(
+                'data-service-unit="mosquitto.service" disabled title="Actions require an SSH tunnel"',
+                html,
+            )
 
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
@@ -106,6 +113,21 @@ class DashboardServerTests(unittest.TestCase):
             connection.close()
             self.assertEqual(response.status, 403)
             self.assertIn("SSH tunnel", body["message"])
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", dashboard_server.SERVICE_ACTION_PATH,
+                body='{"unit":"mosquitto.service","action":"restart"}',
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                    "X-Forwarded-For": "127.0.0.1",
+                },
+            )
+            response = connection.getresponse()
+            response.read()
+            connection.close()
+            self.assertEqual(response.status, 403)
             self.assertEqual(calls, [])
         finally:
             server.shutdown()
@@ -185,7 +207,7 @@ class DashboardServerTests(unittest.TestCase):
         self.assertEqual(report["units"], [])
         self.assertEqual(report["error"], "Service status unavailable")
 
-    def test_render_service_status_escapes_output_and_has_no_actions(self):
+    def test_render_service_status_escapes_output_and_shows_allowed_action(self):
         html = build_dashboard_html(
             {"devices": []},
             {
@@ -208,7 +230,137 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn("MQTT &lt;broker&gt;", html)
         self.assertIn("&lt;running&gt;", html)
         self.assertNotIn("<running>", html)
-        self.assertNotIn("data-service-action", html)
+        self.assertIn('data-service-unit="mosquitto.service"', html)
+        self.assertIn('data-service-action="restart"', html)
+        self.assertIn('src="/assets/service-controls.js"', html)
+
+    def test_service_actions_render_run_now_for_oneshot(self):
+        html = build_dashboard_html(
+            {"devices": []},
+            {"units": [{"name": "Health monitor", "unit": "health-monitor.service"}]},
+        )
+        self.assertIn('data-service-action="start"', html)
+        self.assertIn("Run now</button>", html)
+
+    def test_run_service_action_uses_exact_sudo_command(self):
+        sudoers = (PROJECT_ROOT / "systemd" / "iot-dashboard-restarts.sudoers").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(sudoers.count("/usr/bin/systemctl"), len(dashboard_server.SERVICE_ACTIONS))
+        for unit, action in dashboard_server.SERVICE_ACTIONS.items():
+            self.assertIn(f"/usr/bin/systemctl --no-block {action} {unit}", sudoers)
+
+        with patch.object(
+            dashboard_server.subprocess, "run",
+            return_value=SimpleNamespace(returncode=0),
+        ) as run:
+            response = dashboard_server.run_service_action("mosquitto.service", "restart")
+            self.assertTrue(response["ok"])
+            args, kwargs = run.call_args
+            self.assertEqual(args[0], [
+                "sudo", "-n", "/usr/bin/systemctl", "--no-block",
+                "restart", "mosquitto.service",
+            ])
+            self.assertEqual(kwargs["timeout"], 5)
+            self.assertFalse(kwargs["check"])
+
+            with self.assertRaises(ValueError):
+                dashboard_server.run_service_action("ssh.service", "restart")
+            self.assertEqual(run.call_count, 1)
+
+        with patch.object(
+            dashboard_server.subprocess, "run",
+            return_value=SimpleNamespace(returncode=1),
+        ):
+            with self.assertRaises(OSError):
+                dashboard_server.run_service_action("mosquitto.service", "restart")
+
+        with patch.object(
+            dashboard_server.subprocess, "run",
+            side_effect=dashboard_server.subprocess.TimeoutExpired("systemctl", 5),
+        ):
+            with self.assertRaises(TimeoutError):
+                dashboard_server.run_service_action("mosquitto.service", "restart")
+
+    def test_service_action_http_allowlist_and_errors(self):
+        calls = []
+        rejected = set()
+
+        def runner(unit, action):
+            calls.append((unit, action))
+            if unit in rejected:
+                raise OSError("Service action rejected")
+            return {"ok": True, "message": "Action queued"}
+
+        handler = make_handler(
+            Path("missing-status.json"), quiet=True,
+            service_action_runner=runner,
+            service_status_loader=lambda: {"units": []},
+        )
+        server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+
+        def request(payload, headers=None):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST", dashboard_server.SERVICE_ACTION_PATH,
+                body=json.dumps(payload),
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                    **(headers or {}),
+                },
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            return response.status, body
+
+        try:
+            for unit, action in dashboard_server.SERVICE_ACTIONS.items():
+                status, body = request({"unit": unit, "action": action})
+                self.assertEqual(status, 202)
+                self.assertTrue(body["ok"])
+            self.assertEqual(calls, list(dashboard_server.SERVICE_ACTIONS.items()))
+            rejected.add("iot-dashboard.service")
+            status, body = request({"unit": "iot-dashboard.service", "action": "restart"})
+            self.assertEqual(status, 503)
+            self.assertFalse(body["ok"])
+
+            for payload in (
+                {"unit": "ssh.service", "action": "restart"},
+                {"unit": "mosquitto.service", "action": "stop"},
+                {"unit": "health-monitor.service", "action": "restart"},
+                {"unit": ["mosquitto.service"], "action": "restart"},
+                {"unit": "mosquitto.service", "action": "restart", "extra": True},
+            ):
+                status, _ = request(payload)
+                self.assertEqual(status, 400)
+            status, _ = request(
+                {"unit": "mosquitto.service", "action": "restart"},
+                {"Origin": "http://evil.example"},
+            )
+            self.assertEqual(status, 403)
+            status, _ = request(
+                {"unit": "mosquitto.service", "action": "restart"},
+                {"X-Dashboard-Action": ""},
+            )
+            self.assertEqual(status, 403)
+            self.assertEqual(len(calls), 6)
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/assets/service-controls.js")
+            response = connection.getresponse()
+            script = response.read().decode("utf-8")
+            connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn("data-service-action", script)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
     def test_migrated_dashboard_module_loads_from_new_service_path(self):
         self.assertTrue(MIGRATED_DASHBOARD_PATH.exists())

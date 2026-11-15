@@ -1,0 +1,1 @@
+zack ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block restart mosquitto.service, /usr/bin/systemctl --no-block restart mqtt-listener.service, /usr/bin/systemctl --no-block restart health-monitor.timer, /usr/bin/systemctl --no-block start health-monitor.service, /usr/bin/systemctl --no-block restart iot-dashboard.service

@@ -49,6 +49,16 @@ SERVICE_UNITS = (
     ("Health monitor", "health-monitor.service", "oneshot"),
     ("Dashboard", "iot-dashboard.service", "service"),
 )
+SERVICE_ACTION_PATH = "/api/services/actions"
+SERVICE_ACTIONS = {
+    "mosquitto.service": "restart",
+    "mqtt-listener.service": "restart",
+    "health-monitor.timer": "restart",
+    "health-monitor.service": "start",
+    "iot-dashboard.service": "restart",
+}
+SERVICE_ACTION_LOCK = Lock()
+SERVICE_SCRIPT_PATH = Path(__file__).with_name("service_controls.js")
 SERVICE_PROPERTIES = (
     "Id", "LoadState", "ActiveState", "SubState", "Result",
     "ActiveEnterTimestamp", "StateChangeTimestamp", "ExecMainExitTimestamp",
@@ -163,6 +173,22 @@ def load_service_status() -> dict[str, Any]:
 
     error = "" if completed.returncode == 0 else "Some service status may be unavailable"
     return {"checked_at": checked_at, "error": error, "units": rows}
+
+
+def run_service_action(unit: str, action: str) -> dict[str, Any]:
+    if SERVICE_ACTIONS.get(unit) != action:
+        raise ValueError("Unsupported service action")
+    try:
+        completed = subprocess.run(
+            ["sudo", "-n", "/usr/bin/systemctl", "--no-block", action, unit],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError("Service action timed out") from error
+    if completed.returncode != 0:
+        raise OSError("Service action rejected; check the dashboard sudoers rule")
+    verb = "Run" if action == "start" else "Restart"
+    return {"ok": True, "message": f"{verb} requested for {unit}"}
 
 
 def private_stream_url(value: Any, port: int) -> str:
@@ -675,7 +701,7 @@ def render_device_rows(
     )
 
 
-def render_service_status(report: dict[str, Any]) -> str:
+def render_service_status(report: dict[str, Any], actions_available: bool = True) -> str:
     units = report.get("units", [])
     if not units:
         return (
@@ -688,6 +714,17 @@ def render_service_status(report: dict[str, Any]) -> str:
     rows = []
     for unit in units:
         tone = unit.get("tone") if unit.get("tone") in {"ok", "error", "unknown"} else "unknown"
+        unit_id = unit.get("unit", "")
+        action = SERVICE_ACTIONS.get(unit_id)
+        action_html = ""
+        if action:
+            label = "Run now" if action == "start" else "Restart"
+            disabled = ' disabled title="Actions require an SSH tunnel"' if not actions_available else ""
+            action_html = (
+                f'<button type="button" data-service-action="{action}" '
+                f'data-service-unit="{text(unit_id)}"{disabled}>'
+                f'{label}</button>'
+            )
         rows.append(
             "<tr>"
             f'<td><strong>{text(unit.get("name", ""))}</strong>'
@@ -697,6 +734,7 @@ def render_service_status(report: dict[str, Any]) -> str:
             f'<td>{text(unit.get("result", "-"))}</td>'
             f'<td>{text(unit.get("last_activity", "-"))}</td>'
             f'<td>{text(unit.get("next_run", "-"))}</td>'
+            f'<td>{action_html}</td>'
             "</tr>"
         )
     error_html = f'<p class="message">{text(report["error"])}</p>' if report.get("error") else ""
@@ -705,9 +743,10 @@ def render_service_status(report: dict[str, Any]) -> str:
         '<div class="services-heading"><h2>Services</h2>'
         f'<span>Checked {text(report.get("checked_at", ""))}</span></div>'
         f"{error_html}"
+        '<p class="service-result" data-service-result role="status" aria-live="polite"></p>'
         '<div class="table-scroll"><table>'
         '<thead><tr><th>Service</th><th>State</th><th>Detail</th><th>Last result</th>'
-        '<th>Last activity</th><th>Next run</th></tr></thead>'
+        '<th>Last activity</th><th>Next run</th><th>Action</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table></div></section>'
     )
 
@@ -745,7 +784,7 @@ def build_dashboard_html(
         )
 
     message_html = f'<p class="message">{text(message)}</p>' if message else ""
-    services_html = render_service_status(service_report or {})
+    services_html = render_service_status(service_report or {}, actions_available)
     access_html = '<p class="access-note">Read-only connection</p>' if not actions_available else ""
 
     return f"""<!doctype html>
@@ -801,8 +840,33 @@ def build_dashboard_html(
       font-size: 0.8rem;
     }}
     .services table {{
-      min-width: 44rem;
+      min-width: 50rem;
       margin-top: 0.5rem;
+    }}
+    .services button {{
+      min-height: 2.25rem;
+      border: 1px solid #9ca3af;
+      border-radius: 4px;
+      background: #ffffff;
+      color: #1f2937;
+      padding: 0.35rem 0.65rem;
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+    }}
+    .services button:hover:not(:disabled) {{
+      background: #e5e7eb;
+    }}
+    .services button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.55;
+    }}
+    .service-result {{
+      margin: 0.5rem 0;
+      font-size: 0.9rem;
+    }}
+    .service-result.error {{
+      color: #991b1b;
     }}
     .services small {{
       display: block;
@@ -1046,6 +1110,7 @@ def build_dashboard_html(
   </script>
   <script src="/assets/birdfeeder-controls.js" defer></script>
   <script src="/assets/front-porch-controls.js" defer></script>
+  <script src="/assets/service-controls.js" defer></script>
 </head>
 <body>
   <h1>Pi IoT Dashboard</h1>
@@ -1087,6 +1152,7 @@ def make_handler(
     command_sender: Callable[[str, int | None], dict[str, Any]] = send_birdfeeder_command,
     porch_command_sender: Callable[[str, int | None], dict[str, Any]] = send_porch_command,
     service_status_loader: Callable[[], dict[str, Any]] = load_service_status,
+    service_action_runner: Callable[[str, str], dict[str, Any]] = run_service_action,
 ):
     """Create a request handler bound to a specific status JSON path."""
 
@@ -1107,6 +1173,7 @@ def make_handler(
             script_path = {
                 "/assets/birdfeeder-controls.js": BIRDFEEDER_SCRIPT_PATH,
                 "/assets/front-porch-controls.js": PORCH_SCRIPT_PATH,
+                "/assets/service-controls.js": SERVICE_SCRIPT_PATH,
             }.get(self.path)
             if script_path is not None:
                 try:
@@ -1139,6 +1206,7 @@ def make_handler(
             self.wfile.write(body)
 
         def do_POST(self) -> None:
+            is_service_action = self.path == SERVICE_ACTION_PATH
             if self.path == BIRDFEEDER_COMMAND_PATH:
                 commands = BIRDFEEDER_COMMANDS
                 stream_command = "stream_on"
@@ -1153,7 +1221,7 @@ def make_handler(
                 duration_valid = lambda value: 10 <= value <= 600
                 sender = porch_command_sender
                 command_lock = PORCH_COMMAND_LOCK
-            else:
+            elif not is_service_action:
                 self.send_json(404, {"ok": False, "message": "Not Found"})
                 return
 
@@ -1190,6 +1258,33 @@ def make_handler(
                 return
             if not isinstance(request, dict):
                 self.send_json(400, {"ok": False, "message": "JSON object required"})
+                return
+
+            if is_service_action:
+                unit = request.get("unit")
+                action = request.get("action")
+                if (
+                    set(request) != {"unit", "action"}
+                    or not isinstance(unit, str)
+                    or not isinstance(action, str)
+                    or SERVICE_ACTIONS.get(unit) != action
+                ):
+                    self.send_json(400, {"ok": False, "message": "Unsupported service action"})
+                    return
+                if not SERVICE_ACTION_LOCK.acquire(blocking=False):
+                    self.send_json(409, {"ok": False, "message": "Another service action is in progress"})
+                    return
+                try:
+                    response = service_action_runner(unit, action)
+                except TimeoutError as error:
+                    self.send_json(504, {"ok": False, "message": str(error)})
+                    return
+                except (ConnectionError, OSError) as error:
+                    self.send_json(503, {"ok": False, "message": str(error)})
+                    return
+                finally:
+                    SERVICE_ACTION_LOCK.release()
+                self.send_json(202, response)
                 return
 
             command = request.get("command")

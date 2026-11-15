@@ -419,7 +419,19 @@ http://localhost:8080
 
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows combined health, heartbeat freshness, retained availability, and expandable device details. A declared sleepy device can show `SLEEPING` and `FRESH` with either retained availability value; the separate availability column shows what the device last reported.
 
-The Services table reads a fixed list of local systemd units: Mosquitto, the MQTT listener, the health-monitor timer and one-shot service, and the dashboard. It shows state, last result, last activity, and the timer's next run when systemd provides it. A successful health-monitor run is shown as `Succeeded` even though its one-shot service becomes inactive afterward. This table is read-only; restart controls still need a narrowly scoped privilege rule before they are added.
+The Services table reads a fixed list of local systemd units: Mosquitto, the MQTT listener, the health-monitor timer and one-shot service, and the dashboard. It shows state, last result, last activity, and the timer's next run when systemd provides it. A successful health-monitor run is shown as `Succeeded` even though its one-shot service becomes inactive afterward. On the SSH-tunneled dashboard, each row has a restart button except the one-shot health monitor, which has `Run now`. The ordinary LAN dashboard remains read-only. Actions require confirmation and are queued with `systemctl --no-block`; a successful request means the job was accepted, not that the unit finished successfully. Check the refreshed table or `journalctl` for the outcome. The dashboard's own restart button reconnects when the page returns.
+
+After copying this repository to the Pi, install the narrow sudoers rule and restart the dashboard service:
+
+```bash
+command -v systemctl  # expected: /usr/bin/systemctl
+sudo visudo -cf systemd/iot-dashboard-restarts.sudoers
+sudo install -o root -g root -m 0440 systemd/iot-dashboard-restarts.sudoers /etc/sudoers.d/iot-dashboard-restarts
+sudo visudo -cf /etc/sudoers
+sudo systemctl restart iot-dashboard.service
+```
+
+The rule grants `zack` passwordless access only to the five exact service actions shown on the dashboard. It does not grant arbitrary `systemctl` commands. If your live dashboard unit runs under a different `User=`, update the sudoers username before installing it. The web server returns an error if the rule is missing or an action is rejected. Do not test the rule by running a restart command unless you intend to restart that service.
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 

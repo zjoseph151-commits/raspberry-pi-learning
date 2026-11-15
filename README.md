@@ -419,15 +419,21 @@ http://localhost:8080
 
 From another computer on the same network, replace `localhost` with the Raspberry Pi IP address. The page auto-refreshes every 10 seconds and shows combined health, heartbeat freshness, retained availability, and expandable device details. A declared sleepy device can show `SLEEPING` and `FRESH` with either retained availability value; the separate availability column shows what the device last reported.
 
-The Services table reads a fixed list of local systemd units: Mosquitto, the MQTT listener, the health-monitor timer and one-shot service, and the dashboard. It shows state, last result, last activity, and the timer's next run when systemd provides it. A successful health-monitor run is shown as `Succeeded` even though its one-shot service becomes inactive afterward. This table is read-only; restart controls require authentication and a narrowly scoped privilege rule before they are added.
+The Services table reads a fixed list of local systemd units: Mosquitto, the MQTT listener, the health-monitor timer and one-shot service, and the dashboard. It shows state, last result, last activity, and the timer's next run when systemd provides it. A successful health-monitor run is shown as `Succeeded` even though its one-shot service becomes inactive afterward. This table is read-only; restart controls still need a narrowly scoped privilege rule before they are added.
 
 If `data/status/device_status.json` is missing, the dashboard still loads and shows a friendly empty-state message.
 
 The `birdfeeder-01` detail row has buttons for `record_now`, `stay_awake`, `sleep_now`, and `stream_on`. The dashboard publishes non-retained commands to the existing Birdfeeder MQTT topic and shows the immediate device acknowledgement. `record_now` confirms that capture started, not that upload finished; check later telemetry for the upload result. Stream duration can be 60, 120, or 180 seconds. The last reported stream URL is shown in the row, and a successful `stream_on` response activates an `Open stream` link immediately. The browser must be able to reach the ESP32 LAN address on port 81. The active link and command result survive the dashboard's 10-second refresh in that browser tab.
 
-These controls currently have no password. Anyone who can reach the dashboard on the LAN can send these four commands. The POST endpoint only accepts the known commands as same-origin JSON requests; password protection remains future work.
+Device command buttons are disabled on the ordinary LAN dashboard. To use them from another computer, authenticate to the Pi with SSH and keep this tunnel running in a terminal:
 
-The `front-porch-camera-01` detail row has `start_stream`, `stop_stream`, `stream_info`, and `status_now` buttons. Start stream offers 10, 30, 60, 120, 300, and 600-second windows (120 seconds by default). The row shows the camera's port-80 MJPEG URL and an `Open stream` link while the camera reports an active stream. The browser must be able to reach the camera's LAN address. Command results and stream state survive dashboard refreshes in that browser tab while the next health snapshot catches up. These buttons also have no password.
+```bash
+ssh -N -L 127.0.0.1:18080:127.0.0.1:8080 zack@<pi-ip>
+```
+
+Open `http://127.0.0.1:18080` in the browser on that computer. The dashboard recognizes the loopback connection and enables the buttons. Your SSH login is the authentication for actions; there is no separate dashboard password. The LAN URL remains readable, including device details and stream links, but cannot submit commands. Command POSTs also require a local Host, matching Origin, and the dashboard's action header. A browser opened directly on the Pi at `http://localhost:8080` can also use the controls. Anyone with local access to the Pi can invoke actions, so keep Pi accounts and SSH access restricted.
+
+The `front-porch-camera-01` detail row has `start_stream`, `stop_stream`, `stream_info`, and `status_now` buttons, subject to the same SSH-tunnel action access. Start stream offers 10, 30, 60, 120, 300, and 600-second windows (120 seconds by default). The row shows the camera's port-80 MJPEG URL and an `Open stream` link while the camera reports an active stream. The browser must be able to reach the camera's LAN address. Command results and stream state survive dashboard refreshes in that browser tab while the next health snapshot catches up.
 
 ### Device Onboarding Contract
 

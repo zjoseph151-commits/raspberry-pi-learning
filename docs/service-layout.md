@@ -98,11 +98,11 @@ The listener still subscribes to `home/#`. Canonical `home/devices/<device-id>/<
 
 The dashboard summary now shows combined health, heartbeat freshness, and retained availability. Detail panels show latest status, telemetry, and availability fields. The health monitor writes a derived snapshot under `data/status/` without changing archived MQTT events. Declared sleepy devices use a three-interval freshness window.
 
-The dashboard also reads a fixed set of local systemd units for a read-only Services table: `mosquitto.service`, `mqtt-listener.service`, `health-monitor.timer`, `health-monitor.service`, and `iot-dashboard.service`. Its systemctl call is bounded by a two-second timeout. The one-shot health monitor is shown by its last run result, not marked down merely for being inactive between timer runs. Restart actions are deferred until dashboard authentication and narrow systemd permissions are in place.
+The dashboard also reads a fixed set of local systemd units for a read-only Services table: `mosquitto.service`, `mqtt-listener.service`, `health-monitor.timer`, `health-monitor.service`, and `iot-dashboard.service`. Its systemctl call is bounded by a two-second timeout. The one-shot health monitor is shown by its last run result, not marked down merely for being inactive between timer runs. Restart actions are deferred until narrow systemd permissions are in place.
 
-The `birdfeeder-01` detail row also exposes its four MQTT commands and temporary MJPEG stream URL. The dashboard service publishes commands and waits for a response; the listener still only archives command/response traffic. These controls are currently unauthenticated on the LAN.
+The `birdfeeder-01` detail row also exposes its four MQTT commands and temporary MJPEG stream URL. The dashboard service publishes commands and waits for a response; the listener still only archives command/response traffic. Command buttons are disabled on the ordinary LAN page. Actions require a loopback connection, typically through an authenticated SSH tunnel to the Pi, plus a local Host, matching Origin, and dashboard action header.
 
-The `front-porch-camera-01` detail row exposes `start_stream`, `stop_stream`, `stream_info`, and `status_now`, plus its port-80 MJPEG URL and active stream link. The same dashboard command path waits for the camera's response fields. These controls are also unauthenticated on the LAN.
+The `front-porch-camera-01` detail row exposes `start_stream`, `stop_stream`, `stream_info`, and `status_now`, plus its port-80 MJPEG URL and active stream link. The same dashboard command path waits for the camera's response fields and has the same SSH-tunnel action restriction. The LAN dashboard remains readable.
 
 ## Data Flow
 

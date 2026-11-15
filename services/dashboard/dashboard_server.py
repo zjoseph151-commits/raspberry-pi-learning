@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from ipaddress import IPv4Address, AddressValueError
+from ipaddress import IPv4Address, AddressValueError, ip_address
 from threading import Event, Lock
 from datetime import datetime
 from html import escape
@@ -54,6 +54,31 @@ SERVICE_PROPERTIES = (
     "ActiveEnterTimestamp", "StateChangeTimestamp", "ExecMainExitTimestamp",
     "LastTriggerUSec", "NextElapseUSecRealtime", "NextElapseUSecMonotonic",
 )
+
+
+def is_loopback_peer(address: str) -> bool:
+    try:
+        return ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
+def is_local_host(host: str) -> bool:
+    try:
+        parsed = urlsplit(f"http://{host}")
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        and (port is None or port > 0)
+        and parsed.netloc == host
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.username is None
+        and parsed.password is None
+    )
 
 
 def load_service_status() -> dict[str, Any]:
@@ -510,26 +535,29 @@ def render_event_panel(title: str, event: Any) -> str:
     )
 
 
-def render_birdfeeder_controls(device: dict[str, Any]) -> str:
+def render_birdfeeder_controls(
+    device: dict[str, Any], actions_available: bool = True
+) -> str:
     if device.get("device") != BIRDFEEDER_DEVICE_ID:
         return ""
 
     stream_url = birdfeeder_status_stream_url(device)
+    disabled = ' disabled title="Actions require an SSH tunnel"' if not actions_available else ""
     return (
         '<section class="detail-panel birdfeeder-controls" '
         f'data-birdfeeder-controls data-stream-url="{text(stream_url)}">'
         "<h2>Controls</h2>"
         '<div class="birdfeeder-actions">'
-        '<button type="button" data-birdfeeder-command="record_now">Record now</button>'
-        '<button type="button" data-birdfeeder-command="stay_awake">Stay awake</button>'
-        '<button type="button" data-birdfeeder-command="sleep_now">Sleep now</button>'
+        f'<button type="button" data-birdfeeder-command="record_now"{disabled}>Record now</button>'
+        f'<button type="button" data-birdfeeder-command="stay_awake"{disabled}>Stay awake</button>'
+        f'<button type="button" data-birdfeeder-command="sleep_now"{disabled}>Sleep now</button>'
         '<label for="birdfeeder-stream-duration">Stream duration</label>'
-        '<select id="birdfeeder-stream-duration" data-stream-duration>'
+        f'<select id="birdfeeder-stream-duration" data-stream-duration{disabled}>'
         '<option value="60">60s</option>'
         '<option value="120">120s</option>'
         '<option value="180">180s</option>'
         "</select>"
-        '<button type="button" data-birdfeeder-command="stream_on">Stream on</button>'
+        f'<button type="button" data-birdfeeder-command="stream_on"{disabled}>Stream on</button>'
         "</div>"
         '<p class="birdfeeder-result" data-command-result role="status" aria-live="polite"></p>'
         '<div class="birdfeeder-stream">'
@@ -542,7 +570,9 @@ def render_birdfeeder_controls(device: dict[str, Any]) -> str:
     )
 
 
-def render_porch_controls(device: dict[str, Any]) -> str:
+def render_porch_controls(
+    device: dict[str, Any], actions_available: bool = True
+) -> str:
     if device.get("device") != PORCH_DEVICE_ID:
         return ""
 
@@ -554,6 +584,7 @@ def render_porch_controls(device: dict[str, Any]) -> str:
     remaining = fields.get("stream_remaining_seconds")
     remaining = remaining if type(remaining) is int and remaining > 0 else 0
     received_at = latest_status.get("received_at", "") if isinstance(latest_status, dict) else ""
+    disabled = ' disabled title="Actions require an SSH tunnel"' if not actions_available else ""
     return (
         '<section class="detail-panel porch-controls" '
         f'data-porch-controls data-stream-url="{text(stream_url)}" '
@@ -563,7 +594,7 @@ def render_porch_controls(device: dict[str, Any]) -> str:
         "<h2>Controls</h2>"
         '<div class="porch-actions">'
         '<label for="porch-stream-duration">Stream duration</label>'
-        '<select id="porch-stream-duration" data-stream-duration>'
+        f'<select id="porch-stream-duration" data-stream-duration{disabled}>'
         '<option value="10">10s</option>'
         '<option value="30">30s</option>'
         '<option value="60">60s</option>'
@@ -571,10 +602,10 @@ def render_porch_controls(device: dict[str, Any]) -> str:
         '<option value="300">5m</option>'
         '<option value="600">10m</option>'
         "</select>"
-        '<button type="button" data-porch-command="start_stream">Start stream</button>'
-        '<button type="button" data-porch-command="stop_stream">Stop stream</button>'
-        '<button type="button" data-porch-command="stream_info">Stream info</button>'
-        '<button type="button" data-porch-command="status_now">Status now</button>'
+        f'<button type="button" data-porch-command="start_stream"{disabled}>Start stream</button>'
+        f'<button type="button" data-porch-command="stop_stream"{disabled}>Stop stream</button>'
+        f'<button type="button" data-porch-command="stream_info"{disabled}>Stream info</button>'
+        f'<button type="button" data-porch-command="status_now"{disabled}>Status now</button>'
         "</div>"
         '<p class="porch-result" data-command-result role="status" aria-live="polite"></p>'
         '<div class="porch-stream">'
@@ -606,14 +637,16 @@ def render_device_row(device: dict[str, Any], generated_at: Any = "") -> str:
     )
 
 
-def render_device_detail_row(device: dict[str, Any]) -> str:
+def render_device_detail_row(
+    device: dict[str, Any], actions_available: bool = True
+) -> str:
     """Render the expandable per-device detail row."""
     panels = [
         render_event_panel("Latest Telemetry", device.get("latest_telemetry")),
         render_event_panel("Latest Status", device.get("latest_status")),
         render_event_panel("Availability Event", device.get("availability")),
-        render_birdfeeder_controls(device),
-        render_porch_controls(device),
+        render_birdfeeder_controls(device, actions_available),
+        render_porch_controls(device, actions_available),
     ]
     panels_html = "".join(panel for panel in panels if panel)
 
@@ -632,11 +665,13 @@ def render_device_detail_row(device: dict[str, Any]) -> str:
     )
 
 
-def render_device_rows(device: dict[str, Any], generated_at: Any = "") -> str:
+def render_device_rows(
+    device: dict[str, Any], generated_at: Any = "", actions_available: bool = True
+) -> str:
     """Render the main row and its expandable detail row."""
     return (
         f"{render_device_row(device, generated_at)}\n"
-        f"{render_device_detail_row(device)}"
+        f"{render_device_detail_row(device, actions_available)}"
     )
 
 
@@ -678,7 +713,9 @@ def render_service_status(report: dict[str, Any]) -> str:
 
 
 def build_dashboard_html(
-    status_report: dict[str, Any], service_report: dict[str, Any] | None = None
+    status_report: dict[str, Any],
+    service_report: dict[str, Any] | None = None,
+    actions_available: bool = True,
 ) -> str:
     """Build a simple auto-refreshing dashboard page."""
     generated_at_value = status_report.get("generated_at", "")
@@ -699,7 +736,7 @@ def build_dashboard_html(
 
     if visible_devices:
         device_rows = "\n".join(
-            render_device_rows(device, generated_at_value)
+            render_device_rows(device, generated_at_value, actions_available)
             for device in visible_devices
         )
     else:
@@ -709,6 +746,7 @@ def build_dashboard_html(
 
     message_html = f'<p class="message">{text(message)}</p>' if message else ""
     services_html = render_service_status(service_report or {})
+    access_html = '<p class="access-note">Read-only connection</p>' if not actions_available else ""
 
     return f"""<!doctype html>
 <html lang="en">
@@ -738,6 +776,11 @@ def build_dashboard_html(
     }}
     .services {{
       margin: 1.5rem 0 2rem;
+    }}
+    .access-note {{
+      color: #92400e;
+      font-size: 0.9rem;
+      margin: 0.5rem 0 0;
     }}
     .services-heading {{
       display: flex;
@@ -896,7 +939,7 @@ def build_dashboard_html(
       background: #e5e7eb;
     }}
     .birdfeeder-actions button:disabled, .porch-actions button:disabled {{
-      cursor: wait;
+      cursor: not-allowed;
       opacity: 0.55;
     }}
     .birdfeeder-actions button[data-birdfeeder-command="record_now"] {{
@@ -1007,6 +1050,7 @@ def build_dashboard_html(
 <body>
   <h1>Pi IoT Dashboard</h1>
   <p>Generated at: {generated_at}</p>
+  {access_html}
   {message_html}
   {services_html}
   <h2 class="devices-heading">Devices</h2>
@@ -1047,6 +1091,9 @@ def make_handler(
     """Create a request handler bound to a specific status JSON path."""
 
     class DashboardHandler(BaseHTTPRequestHandler):
+        def is_local_request(self) -> bool:
+            return is_loopback_peer(self.client_address[0])
+
         def send_json(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             self.send_response(status)
@@ -1078,7 +1125,11 @@ def make_handler(
                 self.send_error(404, "Not Found")
                 return
 
-            html = build_dashboard_html(load_device_status(status_path), service_status_loader())
+            html = build_dashboard_html(
+                load_device_status(status_path),
+                service_status_loader(),
+                actions_available=self.is_local_request(),
+            )
             body = html.encode("utf-8")
 
             self.send_response(200)
@@ -1106,10 +1157,18 @@ def make_handler(
                 self.send_json(404, {"ok": False, "message": "Not Found"})
                 return
 
+            if not self.is_local_request():
+                self.send_json(403, {"ok": False, "message": "Actions require an SSH tunnel"})
+                return
+
+            host = self.headers.get("Host", "")
             origin = self.headers.get("Origin")
             fetch_site = self.headers.get("Sec-Fetch-Site")
-            if (origin and origin != f'http://{self.headers.get("Host", "")}') or (
-                fetch_site not in (None, "same-origin", "none")
+            if (
+                not is_local_host(host)
+                or origin != f"http://{host}"
+                or fetch_site not in (None, "same-origin", "none")
+                or self.headers.get("X-Dashboard-Action") != "1"
             ):
                 self.send_json(403, {"ok": False, "message": "Cross-origin request rejected"})
                 return

@@ -54,6 +54,80 @@ class TitleParser(HTMLParser):
 
 
 class DashboardServerTests(unittest.TestCase):
+    def test_action_access_requires_loopback_peer_and_local_host(self):
+        self.assertTrue(dashboard_server.is_loopback_peer("127.0.0.1"))
+        self.assertTrue(dashboard_server.is_loopback_peer("::1"))
+        self.assertFalse(dashboard_server.is_loopback_peer("10.0.0.180"))
+        self.assertFalse(dashboard_server.is_loopback_peer("not-an-ip"))
+        self.assertTrue(dashboard_server.is_local_host("localhost:8080"))
+        self.assertTrue(dashboard_server.is_local_host("127.0.0.1:18080"))
+        for host in ("pi.local:8080", "attacker.example", "localhost@evil.example", "localhost:bad"):
+            self.assertFalse(dashboard_server.is_local_host(host))
+
+    def test_remote_dashboard_is_read_only(self):
+        calls = []
+        handler = make_handler(
+            Path("missing-status.json"),
+            quiet=True,
+            command_sender=lambda command, duration: calls.append(command),
+            service_status_loader=lambda: {"units": []},
+        )
+
+        class RemoteHandler(handler):
+            def is_local_request(self):
+                return False
+
+        server = DashboardRequestHandler.create_test_server(("127.0.0.1", 0), RemoteHandler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request("GET", "/")
+            response = connection.getresponse()
+            html = response.read().decode("utf-8")
+            connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn("Read-only connection", html)
+
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
+            connection.request(
+                "POST",
+                dashboard_server.BIRDFEEDER_COMMAND_PATH,
+                body='{"command":"record_now"}',
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                    "X-Forwarded-For": "127.0.0.1",
+                },
+            )
+            response = connection.getresponse()
+            body = json.loads(response.read())
+            connection.close()
+            self.assertEqual(response.status, 403)
+            self.assertIn("SSH tunnel", body["message"])
+            self.assertEqual(calls, [])
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+    def test_remote_dashboard_disables_device_command_buttons(self):
+        html = build_dashboard_html(
+            {"devices": [{"device": "birdfeeder-01"}, {"device": "front-porch-camera-01"}]},
+            actions_available=False,
+        )
+
+        self.assertIn("Read-only connection", html)
+        self.assertIn(
+            'data-birdfeeder-command="record_now" disabled title="Actions require an SSH tunnel"',
+            html,
+        )
+        self.assertIn(
+            'data-porch-command="start_stream" disabled title="Actions require an SSH tunnel"',
+            html,
+        )
+
     def test_load_service_status_distinguishes_timer_and_oneshot(self):
         output = "\n\n".join(
             (
@@ -418,7 +492,12 @@ class DashboardServerTests(unittest.TestCase):
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
                 "POST", path, body=json.dumps(payload),
-                headers={"Content-Type": "application/json", **(headers or {})},
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                    **(headers or {}),
+                },
             )
             response = connection.getresponse()
             body = json.loads(response.read())
@@ -544,7 +623,12 @@ class DashboardServerTests(unittest.TestCase):
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port)
             connection.request(
                 "POST", path, body=json.dumps(payload),
-                headers={"Content-Type": "application/json", **(headers or {})},
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                    **(headers or {}),
+                },
             )
             response = connection.getresponse()
             body = json.loads(response.read())
@@ -573,6 +657,16 @@ class DashboardServerTests(unittest.TestCase):
             status, _ = request(
                 path, {"command": "record_now"}, {"Origin": "http://evil.example"}
             )
+            self.assertEqual(status, 403)
+            status, _ = request(path, {"command": "record_now"}, {"Origin": ""})
+            self.assertEqual(status, 403)
+            status, _ = request(
+                path,
+                {"command": "record_now"},
+                {"Host": "attacker.example", "Origin": "http://attacker.example"},
+            )
+            self.assertEqual(status, 403)
+            status, _ = request(path, {"command": "record_now"}, {"X-Dashboard-Action": ""})
             self.assertEqual(status, 403)
             status, _ = request("/api/devices/other/commands", {"command": "record_now"})
             self.assertEqual(status, 404)
@@ -603,7 +697,11 @@ class DashboardServerTests(unittest.TestCase):
             connection.request(
                 "POST", dashboard_server.BIRDFEEDER_COMMAND_PATH,
                 body='{"command":"record_now"}',
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{server.server_port}",
+                    "X-Dashboard-Action": "1",
+                },
             )
             response = connection.getresponse()
             body = json.loads(response.read())

@@ -87,7 +87,7 @@
         try {
           var response = await fetch("/api/devices/birdfeeder-01/commands", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-Dashboard-Action": "1" },
             body: JSON.stringify(body),
             cache: "no-store",
             credentials: "same-origin"

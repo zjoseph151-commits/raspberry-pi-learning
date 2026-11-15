@@ -126,9 +126,10 @@ Plain-text retained availability messages are logged and projected into device s
 - The platform currently has no SQLite database, device registry, MQTT authentication, per-device telemetry schema validation, or dedicated per-device dashboard pages.
 - Canonical topics are parsed and validated; older noncanonical `home/#` topics retain legacy behavior.
 - Canonical commands and responses are archived but never refresh heartbeat state. Invalid canonical JSON is retained in JSONL with a `validation_error` and excluded from device state.
-- The dashboard can publish the four `birdfeeder-01` commands. Those controls are currently unauthenticated on the LAN; a successful `record_now` reply means recording started, not that clip upload completed.
-- The dashboard also supports the four `front-porch-camera-01` commands (`start_stream`, `stop_stream`, `stream_info`, `status_now`) and its port-80 MJPEG URL. These controls are likewise unauthenticated on the LAN.
-- The dashboard has a read-only Services table for the local Mosquitto, MQTT listener, health-monitor timer/service, and dashboard systemd units. Restart actions are not implemented; add authentication and narrowly scoped privileges first.
+- The dashboard can publish the four `birdfeeder-01` commands. A successful `record_now` reply means recording started, not that clip upload completed.
+- The dashboard also supports the four `front-porch-camera-01` commands (`start_stream`, `stop_stream`, `stream_info`, `status_now`) and its port-80 MJPEG URL.
+- Both device command panels are disabled on the ordinary LAN page. Use an authenticated SSH tunnel (`ssh -N -L 127.0.0.1:18080:127.0.0.1:8080 zack@<pi-ip>`) and open `http://127.0.0.1:18080` for actions. SSH login provides authentication; the dashboard has no separate password. Direct local Pi access can also act.
+- The dashboard has a read-only Services table for the local Mosquitto, MQTT listener, health-monitor timer/service, and dashboard systemd units. Restart actions are not implemented; add narrowly scoped privileges first.
 - ESP32 firmware version references are currently aligned to `0.2.1`; when changing firmware versions, update `src/main.cpp`, README examples, and firmware source-contract tests together.
 - The default `python -m unittest discover` command does not find tests from the repository root in the current layout; use `python -m unittest discover -s tests -v`.
 

@@ -54,6 +54,16 @@ class TitleParser(HTMLParser):
 
 
 class DashboardServerTests(unittest.TestCase):
+    def test_open_detail_keys_cookie_is_bounded_and_structured(self):
+        cookie = 'theme=light; pi-iot-dashboard-open-details=%5B%22sensor-01%22%5D'
+        self.assertEqual(dashboard_server.open_detail_keys(cookie), frozenset({"sensor-01"}))
+        self.assertEqual(dashboard_server.open_detail_keys("pi-iot-dashboard-open-details=bad"), frozenset())
+        self.assertEqual(
+            dashboard_server.open_detail_keys("pi-iot-dashboard-open-details=%7B%7D"),
+            frozenset(),
+        )
+        self.assertEqual(dashboard_server.open_detail_keys("x" * 8193), frozenset())
+
     def test_action_access_requires_loopback_peer_and_local_host(self):
         self.assertTrue(dashboard_server.is_loopback_peer("127.0.0.1"))
         self.assertTrue(dashboard_server.is_loopback_peer("::1"))
@@ -442,6 +452,13 @@ class DashboardServerTests(unittest.TestCase):
         self.assertIn('data-device-details-key="garage-sensor"', html)
         self.assertIn('storageKey = "pi-iot-dashboard-open-details"', html)
         self.assertIn("localStorage.setItem(storageKey", html)
+        self.assertIn("document.cookie = storageKey", html)
+        self.assertLess(html.rfind("</table>"), html.index("var openKeys = readOpenKeys()"))
+        self.assertNotIn('document.addEventListener("DOMContentLoaded"', html)
+
+        open_html = build_dashboard_html(status, open_keys=frozenset({"garage-sensor"}))
+        self.assertIn('<details data-device-details-key="garage-sensor" open>', open_html)
+        self.assertIn('<details data-device-details-key="esp32-s3-sensor">', open_html)
 
     def test_build_dashboard_html_hides_old_test_devices(self):
         status = {
@@ -1017,6 +1034,15 @@ class DashboardServerTests(unittest.TestCase):
                 conn.request("GET", "/")
                 response = conn.getresponse()
                 body = response.read().decode("utf-8")
+                conn.close()
+                cookie_conn = http.client.HTTPConnection("127.0.0.1", server.server_port)
+                cookie_conn.request(
+                    "GET", "/",
+                    headers={"Cookie": "pi-iot-dashboard-open-details=%5B%22esp32-s3-sensor%22%5D"},
+                )
+                cookie_response = cookie_conn.getresponse()
+                cookie_body = cookie_response.read().decode("utf-8")
+                cookie_conn.close()
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -1027,6 +1053,7 @@ class DashboardServerTests(unittest.TestCase):
             self.assertIn("Pi IoT Dashboard", body)
             self.assertIn("esp32-s3-sensor", body)
             self.assertIn("iot-dashboard.service", body)
+            self.assertIn('<details data-device-details-key="esp32-s3-sensor" open>', cookie_body)
 
 
 if __name__ == "__main__":

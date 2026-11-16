@@ -7,10 +7,11 @@ from ipaddress import IPv4Address, AddressValueError, ip_address
 from threading import Event, Lock
 from datetime import datetime
 from html import escape
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -64,6 +65,7 @@ SERVICE_PROPERTIES = (
     "ActiveEnterTimestamp", "StateChangeTimestamp", "ExecMainExitTimestamp",
     "LastTriggerUSec", "NextElapseUSecRealtime", "NextElapseUSecMonotonic",
 )
+DETAILS_COOKIE_NAME = "pi-iot-dashboard-open-details"
 
 
 def is_loopback_peer(address: str) -> bool:
@@ -88,6 +90,26 @@ def is_local_host(host: str) -> bool:
         and not parsed.fragment
         and parsed.username is None
         and parsed.password is None
+    )
+
+
+def open_detail_keys(cookie_header: str) -> frozenset[str]:
+    if len(cookie_header) > 8192:
+        return frozenset()
+    cookies = SimpleCookie()
+    try:
+        cookies.load(cookie_header)
+        value = cookies[DETAILS_COOKIE_NAME].value
+        if len(value) > 4096:
+            return frozenset()
+        keys = json.loads(unquote(value))
+    except (CookieError, KeyError, ValueError, TypeError):
+        return frozenset()
+    if not isinstance(keys, list):
+        return frozenset()
+    return frozenset(
+        key for key in keys[:100]
+        if isinstance(key, str) and 0 < len(key) <= 128
     )
 
 
@@ -664,7 +686,8 @@ def render_device_row(device: dict[str, Any], generated_at: Any = "") -> str:
 
 
 def render_device_detail_row(
-    device: dict[str, Any], actions_available: bool = True
+    device: dict[str, Any], actions_available: bool = True,
+    open_keys: frozenset[str] = frozenset(),
 ) -> str:
     """Render the expandable per-device detail row."""
     panels = [
@@ -679,10 +702,12 @@ def render_device_detail_row(
     if not panels_html:
         panels_html = '<p class="muted">No expanded device data available.</p>'
 
+    key = detail_key(device)
+    open_attribute = " open" if key in open_keys else ""
     return (
         '<tr class="details-row">'
         '<td colspan="11">'
-        f'<details data-device-details-key="{text(detail_key(device))}">'
+        f'<details data-device-details-key="{text(key)}"{open_attribute}>'
         "<summary>Device Details</summary>"
         f'<div class="details-grid">{panels_html}</div>'
         "</details>"
@@ -692,12 +717,13 @@ def render_device_detail_row(
 
 
 def render_device_rows(
-    device: dict[str, Any], generated_at: Any = "", actions_available: bool = True
+    device: dict[str, Any], generated_at: Any = "", actions_available: bool = True,
+    open_keys: frozenset[str] = frozenset(),
 ) -> str:
     """Render the main row and its expandable detail row."""
     return (
         f"{render_device_row(device, generated_at)}\n"
-        f"{render_device_detail_row(device, actions_available)}"
+        f"{render_device_detail_row(device, actions_available, open_keys)}"
     )
 
 
@@ -755,6 +781,7 @@ def build_dashboard_html(
     status_report: dict[str, Any],
     service_report: dict[str, Any] | None = None,
     actions_available: bool = True,
+    open_keys: frozenset[str] = frozenset(),
 ) -> str:
     """Build a simple auto-refreshing dashboard page."""
     generated_at_value = status_report.get("generated_at", "")
@@ -775,7 +802,7 @@ def build_dashboard_html(
 
     if visible_devices:
         device_rows = "\n".join(
-            render_device_rows(device, generated_at_value, actions_available)
+            render_device_rows(device, generated_at_value, actions_available, open_keys)
             for device in visible_devices
         )
     else:
@@ -1056,58 +1083,6 @@ def build_dashboard_html(
       color: #6b7280;
     }}
   </style>
-  <script>
-    (function () {{
-      var storageKey = "pi-iot-dashboard-open-details";
-      var refreshAfter = Date.now() + 10000;
-
-      window.dashboardDeferRefresh = function (delayMs) {{
-        refreshAfter = Math.max(refreshAfter, Date.now() + delayMs);
-      }};
-
-      setInterval(function () {{
-        if (Date.now() >= refreshAfter) {{
-          window.location.reload();
-        }}
-      }}, 1000);
-
-      function readOpenKeys() {{
-        try {{
-          return new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
-        }} catch (error) {{
-          return new Set();
-        }}
-      }}
-
-      function writeOpenKeys(openKeys) {{
-        try {{
-          localStorage.setItem(storageKey, JSON.stringify(Array.from(openKeys)));
-        }} catch (error) {{
-        }}
-      }}
-
-      document.addEventListener("DOMContentLoaded", function () {{
-        var openKeys = readOpenKeys();
-        var detailRows = document.querySelectorAll("details[data-device-details-key]");
-
-        detailRows.forEach(function (details) {{
-          var key = details.dataset.deviceDetailsKey;
-          if (openKeys.has(key)) {{
-            details.open = true;
-          }}
-
-          details.addEventListener("toggle", function () {{
-            if (details.open) {{
-              openKeys.add(key);
-            }} else {{
-              openKeys.delete(key);
-            }}
-            writeOpenKeys(openKeys);
-          }});
-        }});
-      }});
-    }})();
-  </script>
   <script src="/assets/birdfeeder-controls.js" defer></script>
   <script src="/assets/front-porch-controls.js" defer></script>
   <script src="/assets/service-controls.js" defer></script>
@@ -1141,6 +1116,69 @@ def build_dashboard_html(
     </tbody>
   </table>
   </div>
+  <script>
+    (function () {{
+      var storageKey = "pi-iot-dashboard-open-details";
+      var refreshAfter = Date.now() + 10000;
+
+      window.dashboardDeferRefresh = function (delayMs) {{
+        refreshAfter = Math.max(refreshAfter, Date.now() + delayMs);
+      }};
+
+      setInterval(function () {{
+        if (Date.now() >= refreshAfter) {{
+          window.location.reload();
+        }}
+      }}, 1000);
+
+      function readOpenKeys() {{
+        var cookie = document.cookie.split("; ").find(function (part) {{
+          return part.startsWith(storageKey + "=");
+        }});
+        try {{
+          if (cookie) {{
+            return new Set(JSON.parse(decodeURIComponent(cookie.slice(storageKey.length + 1))));
+          }}
+        }} catch (error) {{
+        }}
+        try {{
+          return new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+        }} catch (error) {{
+          return new Set();
+        }}
+      }}
+
+      function writeOpenKeys(openKeys) {{
+        var value = JSON.stringify(Array.from(openKeys));
+        try {{
+          localStorage.setItem(storageKey, value);
+        }} catch (error) {{
+        }}
+        document.cookie = storageKey + "=" + encodeURIComponent(value) +
+          "; Path=/; SameSite=Strict; Max-Age=31536000";
+      }}
+
+      var openKeys = readOpenKeys();
+      var detailRows = document.querySelectorAll("details[data-device-details-key]");
+      writeOpenKeys(openKeys);
+
+      detailRows.forEach(function (details) {{
+        var key = details.dataset.deviceDetailsKey;
+        if (openKeys.has(key)) {{
+          details.open = true;
+        }}
+
+        details.addEventListener("toggle", function () {{
+          if (details.open) {{
+            openKeys.add(key);
+          }} else {{
+            openKeys.delete(key);
+          }}
+          writeOpenKeys(openKeys);
+        }});
+      }});
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -1196,6 +1234,7 @@ def make_handler(
                 load_device_status(status_path),
                 service_status_loader(),
                 actions_available=self.is_local_request(),
+                open_keys=open_detail_keys(self.headers.get("Cookie", "")),
             )
             body = html.encode("utf-8")
 

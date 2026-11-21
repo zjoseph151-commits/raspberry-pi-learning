@@ -13,6 +13,7 @@ Read these files first:
 5. `TODO.md`
 
 Use `docs/current-state-architecture.md` as the historical pre-migration baseline. The current post-migration source layout is described by `docs/service-layout.md`.
+Before telemetry storage or chart work, read the agreed direction in `docs/telemetry-history-plan.md`. Tailscale is a separate future Operations TODO, not part of that rollout.
 
 ## Current Repository Context
 

@@ -12,3 +12,4 @@ data/logs/*
 !data/logs/.gitkeep
 data/status/*
 !data/status/.gitkeep
+data/history/

@@ -41,11 +41,16 @@ Live verification steps: `docs/preserve-before-expanding.md`.
 
 ## Data Storage
 
-- [ ] Decide when to introduce SQLite.
-- [ ] Design database tables for raw MQTT events, latest device state, device registry, and telemetry.
-- [ ] Define retention rules for text logs, JSONL, CSV, and future database data.
-- [ ] Plan migration from CSV-backed health status to database-backed health status.
-- [ ] Keep JSONL as an easy raw-event archive unless a better replacement is chosen.
+Agreed direction and rollout: `docs/telemetry-history-plan.md`.
+
+- [x] Audit live Pi telemetry fields, reporting intervals, history, log sizes, and storage before finalizing the schema.
+- [x] Design and implement a narrow SQLite telemetry-history store and an idempotent JSONL backfill/incremental import path.
+- [ ] Keep JSONL as the raw-event archive and leave the working CSV-backed health snapshot in place during the history rollout.
+- [x] Test import replay, malformed/invalid events, missing sensor readings, and recovery with local fixtures.
+- [ ] Run the manual Pi backfill and verify the resulting counts, time coverage, and incremental resume before adding chart queries.
+- [ ] Define retention and rotation for text logs, JSONL, CSV, and SQLite; document and test database backup/restore.
+- [ ] After history is stable, plan how to stop the health monitor from rereading complete log files each run.
+- [ ] Revisit database tables for raw MQTT events, latest device state, and a device registry only when those migrations are needed.
 
 ## Dashboard
 
@@ -53,7 +58,9 @@ Live verification steps: `docs/preserve-before-expanding.md`.
 - [x] Display selected telemetry fields beyond the fixed health columns.
 - [x] Add timestamps and stale-data indicators that are easy to understand.
 - [x] Show availability state separately from heartbeat freshness.
-- [ ] Add simple charts after the storage model is stable.
+- [ ] Add a History view in this dashboard, starting with climate temperature and humidity over 24-hour and 7-day ranges, after telemetry history is reliable.
+- [ ] Keep History interactions independent of the overview page's full refresh; show failed sensor reads as gaps and bound chart queries.
+- [ ] Consider a compact trend preview in Device Details after the History view is working.
 - [ ] Keep the dashboard usable on the Raspberry Pi at `http://localhost:8080`.
 
 ## Configuration and Secrets
@@ -70,6 +77,7 @@ Live verification steps: `docs/preserve-before-expanding.md`.
 - [ ] Add backup/restore notes for runtime data.
 - [ ] Decide whether runtime data should eventually live outside the Git checkout.
 - [ ] Add log rotation or retention management.
+- [ ] Set up Tailscale for remote Pi access later; work out access policy and how it coexists with SSH-tunnel-only dashboard actions before enabling it.
 
 ## Testing
 

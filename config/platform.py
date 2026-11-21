@@ -30,6 +30,8 @@ MQTT_JSONL_PATH = Path("data/logs/mqtt_messages.jsonl")
 MQTT_CSV_PATH = Path("data/logs/mqtt_messages.csv")
 DEVICE_STATUS_PATH = Path("data/status/device_status.json")
 TELEMETRY_HISTORY_PATH = Path("data/history/telemetry.sqlite3")
+HISTORY_CLIMATE_DEVICE_ID = "esp32-c3-climate-01"
+HISTORY_CLIMATE_METRIC_UNITS = {"temperature_c": "C", "humidity_percent": "% RH"}
 
 # Structured JSON/CSV fields used by the listener, health monitor, and
 # dashboard. Status and telemetry require `device`; commands may omit it.

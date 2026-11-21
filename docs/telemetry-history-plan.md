@@ -1,6 +1,6 @@
 # Telemetry History Plan
 
-This plan records the direction for collecting and charting sensor history in the custom Pi platform. The pilot importer is implemented and tested locally; the Pi backfill and charts are still pending. `TODO.md` tracks the work.
+This plan records the direction for collecting and charting sensor history in the custom Pi platform. The pilot importer and manual Pi backfill are verified, and the read-only query API is tested locally. The History view, live API verification, and scheduled imports are still pending. `TODO.md` tracks the work.
 
 ## Direction
 
@@ -63,12 +63,31 @@ PY
 
 The climate archive was still growing at audit time, so use the audit counts as a reference, not an exact expected total. A sensor-failure event contributes one `sensor_failed` row to each metric. Empty, malformed, and oversized lines (over 1 MiB including the line terminator) are not indexed, and a final line without a newline is retried on the next run. The importer reads only the file given to it (`--jsonl` overrides the active path); it does not automatically find rotated logs.
 
+### Verified Pi Result: 2026-11-21
+
+- The observed import scanned 43,671 lines, matched 491 climate events, and inserted 982 readings. An immediate rerun scanned and inserted zero, with the checkpoint unchanged at byte `237769620`.
+- Each metric had 110,588 good readings and 44 failed reads, matching the audit's 110,632 climate events. The earliest stored event was `2026-08-03 23:03:50 UTC` and the latest was `2026-11-18 18:35:50 UTC`. All 44 failed reads occurred at the start of the archive.
+- The latest stored reading predates the verification's 24-hour window. The history query should report an empty requested range and the actual latest reading time separately, without shifting the range or implying that the sensor's current state has been verified.
+
+## History API
+
+`GET /api/history` uses the same read-only LAN access as the overview. It accepts exactly one `device`, `metric`, and `range`. The pilot device is `esp32-c3-climate-01`, the metrics are `temperature_c` and `humidity_percent`, and the ranges are `24h` and `7d`. For example, after deploying the API:
+
+```bash
+curl 'http://localhost:8080/api/history?device=esp32-c3-climate-01&metric=temperature_c&range=7d'
+```
+
+- The response uses UTC epoch seconds and includes the requested `[start_utc, end_utc)` interval, units, and `latest` (the last recorded value and quality before `end_utc`, even if outside the chart window). A valid window with no readings returns an empty `points` array, not an error. If there are no earlier readings either, `latest` is null.
+- A 24-hour window returns up to 1,500 raw points; denser windows use five-minute summaries instead of dropping samples. Seven-day windows use 15-minute summaries. Summaries are aligned to UTC boundaries and include the mean (`value`), minimum, maximum, and total and valid sample counts. Edge buckets only include data inside the requested window.
+- For raw points, a failed or invalid reading has a null value and its original `quality`. For summaries, `has_gap` marks a bucket containing invalid readings or an internal interruption; keep those buckets isolated even if they have valid statistics. In either mode, `break_before` marks a new segment, including when consecutive readings are more than three minutes apart. Never insert zeros or shift a stale window to manufacture data.
+- Unsupported parameters return `400`. An unreadable or unavailable database returns `503` without affecting the overview. This API does not ingest new events; until an import timer is installed, it only sees the most recent manual import.
+
 ## Rollout
 
 1. Read-only audit on the live Pi: inventory actual device IDs, telemetry fields and units, timestamps, publish intervals, sensor-failure behavior, available history, log sizes, free space, and storage medium. Confirm the first metrics and useful time ranges before finalizing the schema.
 2. Define a small history schema and import contract. Include device, metric, value, unit, Pi `received_at`, and enough event quality/source information to distinguish failed reads and replay safely. Decide how backfill and incremental import will resume after interruption and avoid duplicates. History still covered by retained JSONL must be rebuildable from it.
 3. Backfill historical validated telemetry and begin incremental import without changing the existing health/status path. Skip invalid canonical events. Test missing data, malformed lines, restarts, replay, and an unavailable database before making charts depend on the new store.
-4. Add a bounded history query API and the History view. Start with raw points for 24 hours when within the limit and bucketed summaries for seven days. Preserve explicit failures and breaks across prolonged missing reports when aggregating. Label units and local display time clearly, and refresh chart data without replacing the page or losing the selected range.
+4. Verify the bounded history query API on the Pi and add the History view. Label units and local display time clearly, and refresh chart data without replacing the page or losing the selected range.
 5. Define raw-log and database retention, rotation, backup, restore, and rebuild procedures before considering history durable. Keep the SQLite database on local Pi storage. Only after this slice is stable should the health monitor's full-log scans and the broader database model be revisited.
 
 ## First Acceptance Checks

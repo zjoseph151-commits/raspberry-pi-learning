@@ -17,10 +17,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.device_contract import parse_device_topic, validate_device_payload
-from config.platform import MQTT_JSONL_PATH, TELEMETRY_HISTORY_PATH
+from config.platform import (
+    HISTORY_CLIMATE_DEVICE_ID,
+    HISTORY_CLIMATE_METRIC_UNITS,
+    MQTT_JSONL_PATH,
+    TELEMETRY_HISTORY_PATH,
+)
 
-CLIMATE_DEVICE = "esp32-c3-climate-01"
-METRIC_UNITS = {"temperature_c": "C", "humidity_percent": "% RH"}
 BATCH_LINES = 1000
 MAX_LINE_BYTES = 1024 * 1024
 CURSOR_CHECK_BYTES = 4096
@@ -86,7 +89,9 @@ def readings_from_line(line: bytes) -> list[Reading]:
         if not isinstance(event, dict) or "validation_error" in event:
             return []
         topic = event.get("topic")
-        if not isinstance(topic, str) or parse_device_topic(topic) != (CLIMATE_DEVICE, "telemetry"):
+        if not isinstance(topic, str) or parse_device_topic(topic) != (
+            HISTORY_CLIMATE_DEVICE_ID, "telemetry"
+        ):
             return []
         payload = event.get("payload")
         received_at = event.get("received_at")
@@ -105,8 +110,8 @@ def readings_from_line(line: bytes) -> list[Reading]:
         return []
 
     return [
-        (CLIMATE_DEVICE, metric, epoch, *measurement(payload, metric), key)
-        for metric in METRIC_UNITS
+        (HISTORY_CLIMATE_DEVICE_ID, metric, epoch, *measurement(payload, metric), key)
+        for metric in HISTORY_CLIMATE_METRIC_UNITS
     ]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
 from ipaddress import IPv4Address, AddressValueError, ip_address
@@ -11,7 +12,7 @@ from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -25,11 +26,14 @@ from config.platform import (
     DEVICE_STATUS_PATH,
     MQTT_BROKER_HOST,
     MQTT_BROKER_PORT,
+    TELEMETRY_HISTORY_PATH,
 )
+from services.dashboard.history_queries import query_history
 
 STATUS_JSON_PATH = DEVICE_STATUS_PATH
 HOST = DASHBOARD_HOST
 PORT = DASHBOARD_PORT
+HISTORY_API_PATH = "/api/history"
 BIRDFEEDER_DEVICE_ID = "birdfeeder-01"
 BIRDFEEDER_COMMAND_PATH = f"/api/devices/{BIRDFEEDER_DEVICE_ID}/commands"
 BIRDFEEDER_COMMAND_TOPIC = f"home/devices/{BIRDFEEDER_DEVICE_ID}/commands"
@@ -1191,6 +1195,7 @@ def make_handler(
     porch_command_sender: Callable[[str, int | None], dict[str, Any]] = send_porch_command,
     service_status_loader: Callable[[], dict[str, Any]] = load_service_status,
     service_action_runner: Callable[[str, str], dict[str, Any]] = run_service_action,
+    history_path: Path = TELEMETRY_HISTORY_PATH,
 ):
     """Create a request handler bound to a specific status JSON path."""
 
@@ -1207,7 +1212,30 @@ def make_handler(
             self.end_headers()
             self.wfile.write(body)
 
+        def serve_history(self, query: str) -> None:
+            try:
+                params = parse_qs(query, strict_parsing=True, keep_blank_values=True, max_num_fields=3)
+                if set(params) != {"device", "metric", "range"} or any(
+                    len(values) != 1 for values in params.values()
+                ):
+                    raise ValueError("Exactly one device, metric, and range are required")
+                result = query_history(
+                    history_path, params["device"][0], params["metric"][0], params["range"][0]
+                )
+            except ValueError:
+                self.send_json(400, {"ok": False, "message": "Unsupported history query"})
+                return
+            except (OSError, sqlite3.Error):
+                self.send_json(503, {"ok": False, "message": "Telemetry history unavailable"})
+                return
+            self.send_json(200, result)
+
         def do_GET(self) -> None:
+            path, _, query = self.path.partition("?")
+            if path == HISTORY_API_PATH:
+                self.serve_history(query)
+                return
+
             script_path = {
                 "/assets/birdfeeder-controls.js": BIRDFEEDER_SCRIPT_PATH,
                 "/assets/front-porch-controls.js": PORCH_SCRIPT_PATH,

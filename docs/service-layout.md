@@ -123,6 +123,19 @@ flowchart LR
 
 ## Verification
 
+The dashboard does not wait for `health-monitor.service` to finish. It serves the last saved snapshot, or an empty state if none exists yet. An older installed dashboard unit with `After=network-online.target health-monitor.service` can remain queued when monitor runs take longer than the interval and run back to back. Check with `systemctl list-jobs --before --no-pager`.
+
+To update that installed unit after syncing the repository, run from the Pi project root:
+
+```bash
+sudo install -m 0644 systemd/iot-dashboard.service /etc/systemd/system/iot-dashboard.service
+sudo systemctl daemon-reload
+sudo systemctl start --no-block iot-dashboard.service
+systemctl status iot-dashboard.service --no-pager -l
+```
+
+This does not require stopping the health monitor timer or restarting the MQTT listener.
+
 Check the running services:
 
 ```bash

@@ -1,6 +1,7 @@
 [Unit]
 Description=Pi IoT Dashboard
-After=network-online.target health-monitor.service
+# Serve the saved snapshot without waiting for a health monitor run.
+After=network-online.target
 Wants=network-online.target
 
 [Service]

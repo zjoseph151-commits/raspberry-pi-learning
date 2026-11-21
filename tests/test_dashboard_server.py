@@ -1,3 +1,4 @@
+from configparser import ConfigParser
 import http.client
 import importlib.util
 import json
@@ -54,6 +55,11 @@ class TitleParser(HTMLParser):
 
 
 class DashboardServerTests(unittest.TestCase):
+    def test_dashboard_unit_does_not_wait_for_health_monitor(self):
+        unit = ConfigParser(interpolation=None)
+        unit.read(PROJECT_ROOT / "systemd" / "iot-dashboard.service", encoding="utf-8")
+        self.assertNotIn("health-monitor.service", unit["Unit"].get("After", "").split())
+
     def test_open_detail_keys_cookie_is_bounded_and_structured(self):
         cookie = 'theme=light; pi-iot-dashboard-open-details=%5B%22sensor-01%22%5D'
         self.assertEqual(dashboard_server.open_detail_keys(cookie), frozenset({"sensor-01"}))
